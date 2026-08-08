@@ -1,0 +1,32 @@
+{
+  "name": "jizhang-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "动物森友会风格的在线记账网站（纯前端本地存储）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "server": "npm --prefix server start",
+    "server:install": "npm --prefix server install",
+    "dev:all": "concurrently -k -n web,api -c cyan,magenta \"npm run dev\" \"npm run server\""
+  },
+  "dependencies": {
+    "animal-island-ui": "^0.9.4",
+    "dayjs": "^1.11.13",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "recharts": "^2.15.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^5.2.0",
+    "concurrently": "^9.0.0",
+    "typescript": "^5.7.3",
+    "vite": "^7.3.2"
+  }
+}

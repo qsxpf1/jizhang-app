@@ -1,0 +1,14 @@
+{
+  "name": "jizhang-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "岛屿记账后端：Express + MySQL",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "mysql2": "^3.11.0"
+  }
+}
