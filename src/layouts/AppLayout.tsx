@@ -5,6 +5,7 @@ import { useBookStore } from '../store/useBookStore';
 import { useUiStore } from '../store/useUiStore';
 import { useAuthStore } from '../store/useAuthStore';
 import RecordModal from '../components/RecordModal';
+import SaveToast from '../components/SaveToast';
 import LoginScreen from '../components/LoginScreen';
 
 interface NavItem {
@@ -139,6 +140,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </button>
       </div>
       <RecordModal />
+      <SaveToast />
     </Cursor>
   );
 }

@@ -118,6 +118,26 @@ const TABLES = [
     v TEXT NOT NULL,
     PRIMARY KEY (user_id, k)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS meta (
+    user_id VARCHAR(40) PRIMARY KEY,
+    version BIGINT NOT NULL DEFAULT 0,
+    updated_at BIGINT NOT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS operation_logs (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    created_at BIGINT NOT NULL,
+    username VARCHAR(50) NOT NULL DEFAULT '',
+    user_id VARCHAR(40) NOT NULL DEFAULT '',
+    method VARCHAR(10) NOT NULL,
+    path VARCHAR(100) NOT NULL,
+    action VARCHAR(40) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    latency_ms INT NOT NULL,
+    detail TEXT,
+    KEY idx_logs_created (created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
 const DATA_TABLES = ['accounts', 'categories', 'txs', 'transfers', 'budgets', 'goals', 'settings'];
@@ -230,6 +250,14 @@ async function migrate() {
 
   // 3) txs 补新列（时间/地点/支付方式），note 扩为 TEXT
   await ensureTxColumns();
+
+  // 4) 为已有账号初始化数据版本（version=1）：
+  //    无版本头的旧客户端请求按 version=0 处理，若账号已是 version 1 则被 409 拒绝，
+  //    避免旧前端 / 中间态代码把已有账号当空账号全量覆盖。
+  await pool.query(
+    'INSERT INTO meta (user_id, version, updated_at) SELECT id, 1, ? FROM users WHERE id NOT IN (SELECT user_id FROM meta)',
+    [Date.now()],
+  );
 }
 
 // ============================================================
@@ -308,7 +336,18 @@ async function readAll(userId) {
   };
 }
 
-async function writeAll(body, userId) {
+/** 读取账号的数据版本（无记录视为 0，即全新账号） */
+async function getVersion(userId) {
+  const [rows] = await pool.query('SELECT version FROM meta WHERE user_id = ?', [userId]);
+  return rows[0]?.version ?? 0;
+}
+
+/**
+ * 全量写入（乐观并发控制）：expectedVersion 与当前版本一致才执行「先删后插」；
+ * 不一致说明有另一台设备改过数据，返回 { conflict } 由上层回 409，让前端刷新，
+ * 避免旧设备的旧快照覆盖新设备刚写入的数据。
+ */
+async function writeAll(body, userId, expectedVersion) {
   const a = Array.isArray(body?.accounts) ? body.accounts : [];
   const c = Array.isArray(body?.categories) ? body.categories : [];
   const t = Array.isArray(body?.txs) ? body.txs : [];
@@ -320,6 +359,18 @@ async function writeAll(body, userId) {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
+
+    // 行锁 + 版本比对，保证「校验版本 → 删 → 插 → 递增版本」是原子操作
+    const [metaRows] = await conn.query(
+      'SELECT version FROM meta WHERE user_id = ? FOR UPDATE',
+      [userId],
+    );
+    const currentVersion = metaRows[0]?.version ?? 0;
+    if (currentVersion !== expectedVersion) {
+      await conn.rollback();
+      return { conflict: true, version: currentVersion };
+    }
+
     for (const table of DATA_TABLES) {
       await conn.query(`DELETE FROM \`${table}\` WHERE user_id = ?`, [userId]);
     }
@@ -366,7 +417,13 @@ async function writeAll(body, userId) {
       JSON.stringify(s),
     ]);
 
+    await conn.query(
+      'INSERT INTO meta (user_id, version, updated_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE version = VALUES(version), updated_at = VALUES(updated_at)',
+      [userId, currentVersion + 1, Date.now()],
+    );
+
     await conn.commit();
+    return { ok: true, version: currentVersion + 1 };
   } catch (e) {
     await conn.rollback();
     throw e;
@@ -376,20 +433,45 @@ async function writeAll(body, userId) {
 }
 
 // ============================================================
+// 操作日志（每次数据库操作都落一条到 operation_logs + 控制台）
+// ============================================================
+async function logOperation({ method, path, action, status, userId = '', username = '', latencyMs = 0, detail }) {
+  try {
+    await pool.query(
+      'INSERT INTO operation_logs (created_at, username, user_id, method, path, action, status, latency_ms, detail) VALUES (?,?,?,?,?,?,?,?,?)',
+      [Date.now(), username, userId, method, path, action, status, latencyMs, detail ? String(detail).slice(0, 2000) : null],
+    );
+  } catch (e) {
+    // 审计日志写入失败不影响主流程
+    console.error('⚠️ 写入操作日志失败：', e?.message || e);
+  }
+  console.log(
+    `[${new Date().toISOString()}] ${method} ${path} · ${action} · ${status} · ${latencyMs}ms · user=${username || userId || '-'}${detail ? ' · ' + detail : ''}`,
+  );
+}
+
+// ============================================================
 // 鉴权中间件
 // ============================================================
 async function authRequired(req, res, next) {
   try {
     const header = req.headers.authorization || '';
     const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (!token) return res.status(401).json({ error: '未登录' });
+    if (!token) {
+      await logOperation({ method: req.method, path: req.path, action: 'auth', status: 'unauthorized', latencyMs: 0, detail: '缺少 token' });
+      return res.status(401).json({ error: '未登录' });
+    }
     const user = await userByToken(token);
-    if (!user) return res.status(401).json({ error: '登录已失效，请重新登录' });
+    if (!user) {
+      await logOperation({ method: req.method, path: req.path, action: 'auth', status: 'unauthorized', latencyMs: 0, detail: 'token 无效或已过期' });
+      return res.status(401).json({ error: '登录已失效，请重新登录' });
+    }
     req.userId = user.user_id;
     req.username = user.username;
     req.token = token;
     next();
   } catch (e) {
+    await logOperation({ method: req.method, path: req.path, action: 'auth', status: 'error', latencyMs: 0, detail: e?.message || String(e) });
     res.status(500).json({ error: `鉴权失败：${e.message || e}` });
   }
 }
@@ -404,17 +486,23 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ---- 认证 ----
 app.post('/api/auth/register', async (req, res) => {
+  const t0 = Date.now();
   try {
     const username = String(req.body?.username || '').trim();
     const password = String(req.body?.password || '');
     if (username.length < 2 || username.length > 20) {
+      await logOperation({ method: 'POST', path: '/api/auth/register', action: 'register', status: 'error', latencyMs: Date.now() - t0, detail: '用户名长度不合法' });
       return res.status(400).json({ error: '用户名需 2-20 个字符' });
     }
     if (password.length < 4 || password.length > 64) {
+      await logOperation({ method: 'POST', path: '/api/auth/register', action: 'register', status: 'error', latencyMs: Date.now() - t0, detail: '密码长度不合法' });
       return res.status(400).json({ error: '密码需 4-64 位' });
     }
     const [exist] = await pool.query('SELECT id FROM users WHERE username = ?', [username]);
-    if (exist.length) return res.status(409).json({ error: '该账号已存在，请直接登录' });
+    if (exist.length) {
+      await logOperation({ method: 'POST', path: '/api/auth/register', action: 'register', status: 'error', latencyMs: Date.now() - t0, username, detail: '用户名已存在' });
+      return res.status(409).json({ error: '该账号已存在，请直接登录' });
+    }
     const id = crypto.randomUUID();
     await pool.query('INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)', [
       id,
@@ -423,48 +511,87 @@ app.post('/api/auth/register', async (req, res) => {
       Date.now(),
     ]);
     const token = await createSession(id);
+    await logOperation({ method: 'POST', path: '/api/auth/register', action: 'register', status: 'success', latencyMs: Date.now() - t0, userId: id, username });
     res.json({ token, username });
   } catch (e) {
+    await logOperation({ method: 'POST', path: '/api/auth/register', action: 'register', status: 'error', latencyMs: Date.now() - t0, detail: e?.message || String(e) });
     res.status(500).json({ error: `注册失败：${e.message || e}` });
   }
 });
 
 app.post('/api/auth/login', async (req, res) => {
+  const t0 = Date.now();
   try {
     const username = String(req.body?.username || '').trim();
     const password = String(req.body?.password || '');
     const [rows] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
     if (!rows.length || !verifyPassword(password, rows[0].password_hash)) {
+      await logOperation({ method: 'POST', path: '/api/auth/login', action: 'login', status: 'unauthorized', latencyMs: Date.now() - t0, username, detail: '用户名或密码错误' });
       return res.status(401).json({ error: '用户名或密码错误' });
     }
     const token = await createSession(rows[0].id);
+    await logOperation({ method: 'POST', path: '/api/auth/login', action: 'login', status: 'success', latencyMs: Date.now() - t0, userId: rows[0].id, username: rows[0].username });
     res.json({ token, username: rows[0].username });
   } catch (e) {
+    await logOperation({ method: 'POST', path: '/api/auth/login', action: 'login', status: 'error', latencyMs: Date.now() - t0, detail: e?.message || String(e) });
     res.status(500).json({ error: `登录失败：${e.message || e}` });
   }
 });
 
 app.post('/api/auth/logout', authRequired, async (req, res) => {
-  await pool.query('DELETE FROM sessions WHERE token = ?', [req.token]);
-  res.json({ ok: true });
+  const t0 = Date.now();
+  try {
+    await pool.query('DELETE FROM sessions WHERE token = ?', [req.token]);
+    await logOperation({ method: 'POST', path: '/api/auth/logout', action: 'logout', status: 'success', latencyMs: Date.now() - t0, userId: req.userId, username: req.username });
+    res.json({ ok: true });
+  } catch (e) {
+    await logOperation({ method: 'POST', path: '/api/auth/logout', action: 'logout', status: 'error', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: e?.message || String(e) });
+    res.status(500).json({ error: `退出失败：${e.message || e}` });
+  }
 });
 
-app.get('/api/auth/me', authRequired, (req, res) => res.json({ username: req.username }));
+app.get('/api/auth/me', authRequired, async (req, res) => {
+  const t0 = Date.now();
+  await logOperation({ method: 'GET', path: '/api/auth/me', action: 'me', status: 'success', latencyMs: Date.now() - t0, userId: req.userId, username: req.username });
+  res.json({ username: req.username });
+});
 
-// ---- 数据（需登录，按账号隔离）----
+// ---- 数据（需登录，按账号隔离；带版本号实现乐观并发）----
 app.get('/api/state', authRequired, async (req, res) => {
+  const t0 = Date.now();
   try {
-    res.json(await readAll(req.userId));
+    const version = await getVersion(req.userId);
+    const data = await readAll(req.userId);
+    res.set('X-Version', String(version));
+    await logOperation({ method: 'GET', path: '/api/state', action: 'read_state', status: 'success', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: `version=${version}` });
+    res.json(data);
   } catch (e) {
+    await logOperation({ method: 'GET', path: '/api/state', action: 'read_state', status: 'error', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: e?.message || String(e) });
     res.status(500).json({ error: `读取数据失败：${e.message || e}` });
   }
 });
 
 app.put('/api/state', authRequired, async (req, res) => {
+  const t0 = Date.now();
   try {
-    await writeAll(req.body, req.userId);
-    res.json({ ok: true });
+    const expectedVersion = Number(req.headers['x-version'] ?? 0);
+    const result = await writeAll(req.body, req.userId, expectedVersion);
+    if (result.conflict) {
+      // 本请求基于的版本已过期：拒绝写入，返回最新数据让前端刷新
+      const latest = await readAll(req.userId);
+      await logOperation({
+        method: 'PUT', path: '/api/state', action: 'save_state', status: 'conflict',
+        latencyMs: Date.now() - t0, userId: req.userId, username: req.username,
+        detail: `版本冲突：客户端=${expectedVersion}，当前=${result.version}`,
+      });
+      res.status(409).json({ error: '另一台设备已修改数据，已为你刷新到最新版本', version: result.version, data: latest });
+      return;
+    }
+    res.set('X-Version', String(result.version));
+    await logOperation({ method: 'PUT', path: '/api/state', action: 'save_state', status: 'success', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: `version=${result.version}` });
+    res.json({ ok: true, version: result.version });
   } catch (e) {
+    await logOperation({ method: 'PUT', path: '/api/state', action: 'save_state', status: 'error', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: e?.message || String(e) });
     res.status(500).json({ error: `保存数据失败：${e.message || e}` });
   }
 });

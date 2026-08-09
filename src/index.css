@@ -1698,3 +1698,43 @@ h4 {
   font-size: 12px;
   margin-top: 14px;
 }
+
+/* ---------- 保存结果 toast ---------- */
+.save-toast {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 50px;
+  background: var(--ac-content);
+  border: 2.5px solid var(--ac-border);
+  box-shadow: 0 5px 0 0 var(--ac-shadow-btn);
+  font-size: 14px;
+  font-weight: 800;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+}
+
+.save-toast.success {
+  color: var(--ac-success);
+}
+
+.save-toast.error {
+  color: var(--ac-error);
+}
+
+.save-toast.conflict {
+  color: #d9902c;
+}
+
+.save-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

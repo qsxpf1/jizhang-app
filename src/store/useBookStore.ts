@@ -2,13 +2,17 @@ import { create } from 'zustand';
 import type { Account, Budget, Category, Goal, Settings, Transfer, Tx } from '../types';
 import { DEFAULT_ACCOUNTS, DEFAULT_CATEGORIES, seedTransactions } from '../data/defaults';
 import { uid } from '../utils/storage';
-import { getState, putState, type Snapshot } from '../api';
+import { getState, putState, ConflictError, type Snapshot } from '../api';
 
 interface BookState {
   /** 是否已从后端加载完成 */
   hydrated: boolean;
   /** 加载失败信息（后端连不上时展示） */
   loadError: string | null;
+  /** 写入后端状态：idle=无 / saving=写入中 / success=成功 / error=失败 / conflict=版本冲突已刷新 */
+  saveStatus: 'idle' | 'saving' | 'success' | 'error' | 'conflict';
+  /** 上次写入失败原因 */
+  saveError: string | null;
 
   accounts: Account[];
   categories: Category[];
@@ -61,6 +65,8 @@ const defaultSettings: Settings = { bellMode: false, bellRate: 10, firstName: '�
 export const useBookStore = create<BookState>()((set) => ({
   hydrated: false,
   loadError: null,
+  saveStatus: 'idle',
+  saveError: null,
   accounts: [],
   categories: [],
   txs: [],
@@ -71,8 +77,12 @@ export const useBookStore = create<BookState>()((set) => ({
 
   init: async () => {
     try {
-      const snap = await getState();
-      if (!snap.accounts || snap.accounts.length === 0) {
+      const { data: snap, version } = await getState();
+      currentVersion = version;
+      // 仅当确属「全新账号」（服务端版本为 0 且账户列表确实为空）才种默认数据。
+      // 用可选链 + 版本双重判断：即使接口返回形状异常，也绝不把已有账号当空账号清空。
+      const isNewAccount = version === 0 && snap.accounts?.length === 0;
+      if (isNewAccount) {
         // 新账号首次使用：只种默认分类/账户，流水从空开始
         const seeded: Snapshot = {
           accounts: DEFAULT_ACCOUNTS,
@@ -83,9 +93,12 @@ export const useBookStore = create<BookState>()((set) => ({
           goals: [],
           settings: defaultSettings,
         };
-        await putState(seeded);
+        const res = await putState(seeded, currentVersion);
+        currentVersion = res.version;
+        lastSavedJson = JSON.stringify(seeded);
         set({ ...seeded, hydrated: true, loadError: null });
       } else {
+        lastSavedJson = JSON.stringify(snap);
         set({ ...snap, hydrated: true, loadError: null });
       }
     } catch (e) {
@@ -93,10 +106,14 @@ export const useBookStore = create<BookState>()((set) => ({
     }
   },
 
-  reset: () =>
+  reset: () => {
+    lastSavedJson = null;
+    currentVersion = 0;
     set({
       hydrated: false,
       loadError: null,
+      saveStatus: 'idle',
+      saveError: null,
       accounts: [],
       categories: [],
       txs: [],
@@ -104,7 +121,8 @@ export const useBookStore = create<BookState>()((set) => ({
       budgets: [],
       goals: [],
       settings: { ...defaultSettings },
-    }),
+    });
+  },
 
   // 账目
   addTx: (t) => set((s) => ({ txs: [...s.txs, { ...t, id: uid(), createdAt: Date.now() }] })),
@@ -180,23 +198,80 @@ export const useBookStore = create<BookState>()((set) => ({
     })),
 }));
 
-// 自动保存：数据一变 → 防抖 200ms → 把最新全量提交到后端
+// 自动保存：业务数据一变 → 防抖 200ms → 把最新全量提交到后端，并反馈保存结果
+/** 上次成功写入服务器时的快照 JSON（用于跳过「登录后回显」等无需重复写入的场景） */
+let lastSavedJson: string | null = null;
+/** 当前账号在服务器端的数据版本（乐观并发控制） */
+let currentVersion = 0;
+
+/** 取当前业务数据快照（不含 hydrated / saveStatus 等 UI 状态） */
+function buildPayload(s: {
+  accounts: Account[];
+  categories: Category[];
+  txs: Tx[];
+  transfers: Transfer[];
+  budgets: Budget[];
+  goals: Goal[];
+  settings: Settings;
+}): Snapshot {
+  return {
+    accounts: s.accounts,
+    categories: s.categories,
+    txs: s.txs,
+    transfers: s.transfers,
+    budgets: s.budgets,
+    goals: s.goals,
+    settings: s.settings,
+  };
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-useBookStore.subscribe((state) => {
+useBookStore.subscribe((state, prevState) => {
   if (!state.hydrated) return;
+  // 仅当业务数据真的变化才触发保存；saveStatus/saveError 等状态变化不触发，避免循环
+  const dataChanged =
+    state.accounts !== prevState.accounts ||
+    state.categories !== prevState.categories ||
+    state.txs !== prevState.txs ||
+    state.transfers !== prevState.transfers ||
+    state.budgets !== prevState.budgets ||
+    state.goals !== prevState.goals ||
+    state.settings !== prevState.settings;
+  if (!dataChanged) return;
   if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    const s = useBookStore.getState();
-    if (!s.hydrated) return;
-    putState({
-      accounts: s.accounts,
-      categories: s.categories,
-      txs: s.txs,
-      transfers: s.transfers,
-      budgets: s.budgets,
-      goals: s.goals,
-      settings: s.settings,
-    }).catch((e) => console.error('保存到后端失败：', e));
-  }, 200);
+  saveTimer = setTimeout(saveNow, 200);
 });
+
+async function saveNow() {
+  const s = useBookStore.getState();
+  if (!s.hydrated) return;
+  const payload = buildPayload(s);
+  const json = JSON.stringify(payload);
+  if (json === lastSavedJson) return; // 与服务器已一致，无需重复写入
+  useBookStore.setState({ saveStatus: 'saving', saveError: null });
+  try {
+    const res = await putState(payload, currentVersion);
+    currentVersion = res.version;
+    lastSavedJson = json;
+    useBookStore.setState({ saveStatus: 'success' });
+  } catch (e) {
+    if (e instanceof ConflictError) {
+      // 本设备快照已过期：不覆盖另一台设备的写入，改为刷新为服务器最新数据
+      currentVersion = e.latest.version;
+      const latest = e.latest.data;
+      lastSavedJson = JSON.stringify(latest);
+      useBookStore.setState({
+        ...latest,
+        saveStatus: 'conflict',
+        saveError: e.message || '检测到另一台设备已修改数据，已为你刷新',
+      });
+    } else {
+      console.error('保存到后端失败：', e);
+      useBookStore.setState({
+        saveStatus: 'error',
+        saveError: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+}
