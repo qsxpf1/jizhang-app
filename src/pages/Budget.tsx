@@ -63,7 +63,7 @@ export default function Budget() {
 
       <Card className="mt16">
         <div className="budget-head">
-          <div>
+          <div className="budget-total-wrap">
             <div className="budget-name">本月总预算</div>
             <Input
               type="number"

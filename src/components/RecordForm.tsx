@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, Input } from 'animal-island-ui';
 import type { PaymentMethod, Tx, TxType } from '../types';
 import { PAY_METHODS } from '../data/payMethods';
@@ -11,6 +11,11 @@ const TYPE_TABS: { key: TxType; label: string }[] = [
   { key: 'expense', label: '支出' },
   { key: 'income', label: '收入' },
 ];
+
+/** 折叠状态下一行最多展示多少项 */
+const MAX_VISIBLE_CATS = 5;
+const MAX_VISIBLE_ACCS = 3;
+const MAX_VISIBLE_PAYS = 3;
 
 interface RecordFormProps {
   /** 编辑目标；null = 新增 */
@@ -45,14 +50,33 @@ export default function RecordForm({
   const [date, setDate] = useState(() => dateStr(new Date()));
   const [time, setTime] = useState('');
   const [location, setLocation] = useState('');
+  const [showLocationDropdown, setShowLocationDropdown] = useState(false);
+  const locationRef = useRef<HTMLDivElement>(null);
   const [payMethod, setPayMethod] = useState<PaymentMethod | ''>('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const [expandedCat, setExpandedCat] = useState(false);
+  const [expandedAcc, setExpandedAcc] = useState(false);
+  const [expandedPay, setExpandedPay] = useState(false);
 
   const cats = useMemo(
     () => categories.filter((c) => c.type === type).sort((a, b) => a.sort - b.sort),
     [categories, type],
   );
+
+  const txs = useBookStore((s) => s.txs);
+  const locationHistory = useMemo(() => {
+    const set = new Set<string>();
+    txs.forEach((t) => { if (t.location) set.add(t.location); });
+    return [...set].sort();
+  }, [txs]);
+
+  // 根据输入过滤历史地点
+  const filteredLocations = useMemo(() => {
+    if (!location.trim()) return locationHistory;
+    const q = location.toLowerCase();
+    return locationHistory.filter((l) => l.toLowerCase().includes(q));
+  }, [locationHistory, location]);
 
   // 初始化：编辑回填；否则新增默认（resetKey 变化时重置，用于快速连记）
   useEffect(() => {
@@ -66,6 +90,10 @@ export default function RecordForm({
       setLocation(editing.location ?? '');
       setPayMethod(editing.payMethod ?? '');
       setNote(editing.note ?? '');
+      // 编辑时展开所有区块以确保选中项可见
+      setExpandedCat(true);
+      setExpandedAcc(true);
+      setExpandedPay(true);
     } else {
       setType('expense');
       setAmount('');
@@ -78,8 +106,22 @@ export default function RecordForm({
       setAccountId(accounts[0]?.id ?? '');
     }
     setError('');
+    setExpandedCat(false);
+    setExpandedAcc(false);
+    setExpandedPay(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing, resetKey]);
+
+  // 点击外部关闭地点下拉
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (locationRef.current && !locationRef.current.contains(e.target as Node)) {
+        setShowLocationDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   const switchType = (t: TxType) => {
     setType(t);
@@ -144,29 +186,37 @@ export default function RecordForm({
       </div>
 
       <div className="form-label">分类</div>
-      <div className="cat-grid">
-        {cats.map((c) => (
-          <button
-            key={c.id}
-            type="button"
-            className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
-            style={
-              categoryId === c.id
-                ? { borderColor: c.color, background: `${c.color}22` }
-                : undefined
-            }
-            onClick={() => setCategoryId(c.id)}
-          >
-            <span className="cat-icon">{c.icon}</span>
-            <span className="cat-name">{c.name}</span>
+      <div className="cat-grid-wrap">
+        <div className={`cat-grid ${!expandedCat && cats.length > MAX_VISIBLE_CATS ? 'collapsed' : ''}`}>
+          {cats.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
+              style={
+                categoryId === c.id
+                  ? { borderColor: c.color, background: `${c.color}22` }
+                  : undefined
+              }
+              onClick={() => setCategoryId(c.id)}
+            >
+              <span className="cat-icon">{c.icon}</span>
+              <span className="cat-name">{c.name}</span>
+            </button>
+          ))}
+        </div>
+        {!expandedCat && cats.length > MAX_VISIBLE_CATS && (
+          <button type="button" className="cat-expand-btn" onClick={() => setExpandedCat(true)}>
+            <span className="cat-expand-dots">···</span>
+            <span className="cat-expand-label">展开</span>
           </button>
-        ))}
+        )}
       </div>
       {cats.length === 0 && <p className="form-tip">该类型下暂无分类，可在「设置」中添加</p>}
 
       <div className="form-label">账户</div>
-      <div className="acc-chips">
-        {accounts.map((a) => (
+      <div className={`acc-chips ${expandedAcc ? '' : 'collapsed'}`}>
+        {(expandedAcc ? accounts : accounts.slice(0, MAX_VISIBLE_ACCS)).map((a) => (
           <button
             key={a.id}
             type="button"
@@ -176,12 +226,21 @@ export default function RecordForm({
             {a.icon} {a.name}
           </button>
         ))}
+        {!expandedAcc && accounts.length > MAX_VISIBLE_ACCS && (
+          <button
+            type="button"
+            className="acc-chip more-chip"
+            onClick={() => setExpandedAcc(true)}
+          >
+            <span className="more-dots">···</span>
+          </button>
+        )}
       </div>
       {accounts.length === 0 && <p className="form-tip">暂无账户，可在「账户」中添加</p>}
 
       <div className="form-label">支付方式</div>
-      <div className="acc-chips">
-        {PAY_METHODS.map((m) => (
+      <div className={`acc-chips ${expandedPay ? '' : 'collapsed'}`}>
+        {(expandedPay ? PAY_METHODS : PAY_METHODS.slice(0, MAX_VISIBLE_PAYS)).map((m) => (
           <button
             key={m.key}
             type="button"
@@ -191,6 +250,15 @@ export default function RecordForm({
             {m.icon} {m.label}
           </button>
         ))}
+        {!expandedPay && PAY_METHODS.length > MAX_VISIBLE_PAYS && (
+          <button
+            type="button"
+            className="acc-chip more-chip"
+            onClick={() => setExpandedPay(true)}
+          >
+            <span className="more-dots">···</span>
+          </button>
+        )}
       </div>
 
       <div className="form-row">
@@ -210,12 +278,43 @@ export default function RecordForm({
       </div>
 
       <div className="form-label">地点</div>
-      <Input
-        placeholder="地点（选填）"
-        allowClear
-        value={location}
-        onChange={(e) => setLocation(e.target.value)}
-      />
+      <div className="location-wrapper" ref={locationRef}>
+        <Input
+          placeholder="地点（选填）"
+          allowClear
+          value={location}
+          onChange={(e) => {
+            setLocation(e.target.value);
+            if (e.target.value.trim()) {
+              setShowLocationDropdown(true);
+            } else {
+              setShowLocationDropdown(false);
+            }
+          }}
+          onFocus={() => {
+            if (location.trim() || filteredLocations.length > 0) {
+              setShowLocationDropdown(true);
+            }
+          }}
+        />
+        {showLocationDropdown && filteredLocations.length > 0 && (
+          <ul className="location-dropdown">
+            {filteredLocations.map((loc) => (
+              <li
+                key={loc}
+                className="location-option"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  setLocation(loc);
+                  setShowLocationDropdown(false);
+                }}
+              >
+                📍 {loc}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
 
       <div className="form-label">详细说明</div>
       <textarea

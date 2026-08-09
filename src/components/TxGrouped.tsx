@@ -60,10 +60,10 @@ export default function TxGrouped({
                     <span className="tx-date">
                       {accOf(t.accountId)?.name ?? '未知'}
                       {t.time ? ` · ${t.time}` : ''}
-                      {t.location ? ` · 📍${t.location}` : ''}
                       {t.payMethod ? ` · ${payMethodLabel(t.payMethod)}` : ''}
-                      {t.note ? ` · ${t.note}` : ''}
                     </span>
+                    {t.location && <span className="tx-location">📍 {t.location}</span>}
+                    {t.note && <span className="tx-note">{t.note}</span>}
                   </span>
                   <span className={t.type === 'income' ? 'tx-amt income' : 'tx-amt expense'}>
                     {formatMoney(t.amount, settings)}

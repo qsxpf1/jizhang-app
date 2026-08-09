@@ -399,6 +399,16 @@ h4 {
   text-overflow: ellipsis;
 }
 
+.tx-location,
+.tx-note {
+  display: block;
+  font-size: 12px;
+  color: var(--ac-sub);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tx-amt {
   font-size: 15px;
   font-weight: 800;
@@ -610,6 +620,55 @@ h4 {
   gap: 8px;
 }
 
+.cat-grid-wrap {
+  position: relative;
+}
+
+.cat-grid.collapsed {
+  max-height: 78px;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+}
+
+.cat-expand-btn {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px;
+  border: 2.5px solid var(--ac-input-border);
+  border-radius: 14px;
+  background: rgba(248, 248, 240, 0.9);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+  min-width: 44px;
+  transition: all 0.2s;
+  z-index: 2;
+}
+
+.cat-expand-btn:hover {
+  border-color: var(--ac-primary);
+  background: var(--ac-primary-light);
+}
+
+.cat-expand-dots {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ac-sub);
+  line-height: 1;
+}
+
+.cat-expand-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ac-sub);
+}
+
 .cat-chip {
   display: flex;
   flex-direction: column;
@@ -646,6 +705,36 @@ h4 {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.acc-chips.collapsed {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.acc-chips.collapsed .acc-chip:not(.more-chip) {
+  flex-shrink: 0;
+}
+
+.more-chip {
+  flex-shrink: 0;
+  border-color: var(--ac-disabled) !important;
+  background: var(--ac-bg) !important;
+  opacity: 0.7;
+  min-width: 48px;
+  justify-content: center;
+}
+
+.more-chip:hover {
+  opacity: 1;
+  border-color: var(--ac-primary) !important;
+}
+
+.more-dots {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--ac-sub);
 }
 
 .acc-chip {
@@ -805,6 +894,44 @@ h4 {
 .note-textarea::placeholder {
   color: var(--ac-disabled);
   font-weight: 600;
+}
+
+/* ---------- 地点历史下拉 ---------- */
+.location-wrapper {
+  position: relative;
+}
+
+.location-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  background: var(--ac-content);
+  border: 2px solid var(--ac-input-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 0 0 var(--ac-shadow-btn);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.location-option {
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ac-text);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.location-option:hover {
+  background: var(--ac-primary-light);
 }
 
 /* ---------- 流水列表 ---------- */
@@ -1367,8 +1494,14 @@ h4 {
   margin-bottom: 8px;
 }
 
+.budget-total-wrap {
+  flex: 1;
+  min-width: 200px;
+}
+
 .budget-input {
-  width: 180px;
+  width: 100%;
+  max-width: 400px;
 }
 
 .budget-nums {
@@ -1433,7 +1566,7 @@ h4 {
 }
 
 .budget-input-sm {
-  width: 130px;
+  width: 100%;
 }
 
 .budget-bar {
