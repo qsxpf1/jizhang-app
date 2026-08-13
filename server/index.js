@@ -59,6 +59,19 @@ const TABLES = [
     color VARCHAR(20) NOT NULL,
     is_default TINYINT(1) NOT NULL DEFAULT 0,
     sort INT NOT NULL DEFAULT 0,
+    group_id VARCHAR(40) NULL,
+    PRIMARY KEY (user_id, id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+
+  `CREATE TABLE IF NOT EXISTS category_groups (
+    user_id VARCHAR(40) NOT NULL,
+    id VARCHAR(40) NOT NULL,
+    name VARCHAR(50) NOT NULL,
+    type VARCHAR(10) NOT NULL,
+    icon VARCHAR(10) NOT NULL,
+    color VARCHAR(20) NOT NULL,
+    sort INT NOT NULL DEFAULT 0,
+    created_at BIGINT NOT NULL,
     PRIMARY KEY (user_id, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 
@@ -140,7 +153,16 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
-const DATA_TABLES = ['accounts', 'categories', 'txs', 'transfers', 'budgets', 'goals', 'settings'];
+const DATA_TABLES = [
+  'accounts',
+  'categories',
+  'category_groups',
+  'txs',
+  'transfers',
+  'budgets',
+  'goals',
+  'settings',
+];
 const DEFAULT_SETTINGS = { bellMode: false, bellRate: 10, firstName: '岛主' };
 
 // ============================================================
@@ -251,6 +273,16 @@ async function migrate() {
   // 3) txs 补新列（时间/地点/支付方式），note 扩为 TEXT
   await ensureTxColumns();
 
+  // 3.5) categories 补 group_id 列（大类归属），幂等
+  const [catCols] = await pool.query(
+    `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'categories' AND COLUMN_NAME = 'group_id'`,
+    [DB_NAME],
+  );
+  if (catCols.length === 0) {
+    await pool.query(`ALTER TABLE categories ADD COLUMN group_id VARCHAR(40) NULL`);
+  }
+
   // 4) 为已有账号初始化数据版本（version=1）：
   //    无版本头的旧客户端请求按 version=0 处理，若账号已是 version 1 则被 409 拒绝，
   //    避免旧前端 / 中间态代码把已有账号当空账号全量覆盖。
@@ -266,6 +298,7 @@ async function migrate() {
 async function readAll(userId) {
   const [accounts] = await pool.query('SELECT * FROM accounts WHERE user_id = ?', [userId]);
   const [categories] = await pool.query('SELECT * FROM categories WHERE user_id = ?', [userId]);
+  const [categoryGroups] = await pool.query('SELECT * FROM category_groups WHERE user_id = ?', [userId]);
   const [txs] = await pool.query('SELECT * FROM txs WHERE user_id = ?', [userId]);
   const [transfers] = await pool.query('SELECT * FROM transfers WHERE user_id = ?', [userId]);
   const [budgets] = await pool.query('SELECT * FROM budgets WHERE user_id = ?', [userId]);
@@ -291,6 +324,16 @@ async function readAll(userId) {
       color: r.color,
       isDefault: !!r.is_default,
       sort: r.sort,
+      groupId: r.group_id || undefined,
+    })),
+    categoryGroups: categoryGroups.map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: r.type,
+      icon: r.icon,
+      color: r.color,
+      sort: r.sort,
+      createdAt: Number(r.created_at),
     })),
     txs: txs.map((r) => ({
       id: r.id,
@@ -350,6 +393,7 @@ async function getVersion(userId) {
 async function writeAll(body, userId, expectedVersion) {
   const a = Array.isArray(body?.accounts) ? body.accounts : [];
   const c = Array.isArray(body?.categories) ? body.categories : [];
+  const cg = Array.isArray(body?.categoryGroups) ? body.categoryGroups : [];
   const t = Array.isArray(body?.txs) ? body.txs : [];
   const tr = Array.isArray(body?.transfers) ? body.transfers : [];
   const b = Array.isArray(body?.budgets) ? body.budgets : [];
@@ -383,8 +427,14 @@ async function writeAll(body, userId, expectedVersion) {
     }
     for (const x of c) {
       await conn.query(
-        'INSERT INTO categories (user_id,id,name,type,icon,color,is_default,sort) VALUES (?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.name, x.type, x.icon, x.color, x.isDefault ? 1 : 0, x.sort ?? 0],
+        'INSERT INTO categories (user_id,id,name,type,icon,color,is_default,sort,group_id) VALUES (?,?,?,?,?,?,?,?,?)',
+        [userId, x.id, x.name, x.type, x.icon, x.color, x.isDefault ? 1 : 0, x.sort ?? 0, x.groupId || null],
+      );
+    }
+    for (const x of cg) {
+      await conn.query(
+        'INSERT INTO category_groups (user_id,id,name,type,icon,color,sort,created_at) VALUES (?,?,?,?,?,?,?,?)',
+        [userId, x.id, x.name, x.type, x.icon, x.color, x.sort ?? 0, x.createdAt ?? Date.now()],
       );
     }
     for (const x of t) {

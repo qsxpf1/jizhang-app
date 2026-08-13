@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Account, Budget, Category, Goal, Settings, Transfer, Tx } from '../types';
+import type { Account, Budget, Category, CategoryGroup, Goal, Settings, Transfer, Tx } from '../types';
 import { DEFAULT_ACCOUNTS, DEFAULT_CATEGORIES, seedTransactions } from '../data/defaults';
 import { uid } from '../utils/storage';
 import { getState, putState, ConflictError, type Snapshot } from '../api';
@@ -16,6 +16,7 @@ interface BookState {
 
   accounts: Account[];
   categories: Category[];
+  categoryGroups: CategoryGroup[];
   txs: Tx[];
   transfers: Transfer[];
   budgets: Budget[];
@@ -44,6 +45,11 @@ interface BookState {
   updateCategory: (id: string, patch: Partial<Omit<Category, 'id'>>) => void;
   deleteCategory: (id: string) => void;
 
+  // 分类组（大类）
+  addCategoryGroup: (g: Omit<CategoryGroup, 'id' | 'createdAt'>) => void;
+  updateCategoryGroup: (id: string, patch: Partial<Omit<CategoryGroup, 'id'>>) => void;
+  deleteCategoryGroup: (id: string) => void;
+
   // 预算
   setBudget: (b: Omit<Budget, 'id'>) => void;
   deleteBudget: (id: string) => void;
@@ -69,6 +75,7 @@ export const useBookStore = create<BookState>()((set) => ({
   saveError: null,
   accounts: [],
   categories: [],
+  categoryGroups: [],
   txs: [],
   transfers: [],
   budgets: [],
@@ -87,6 +94,7 @@ export const useBookStore = create<BookState>()((set) => ({
         const seeded: Snapshot = {
           accounts: DEFAULT_ACCOUNTS,
           categories: DEFAULT_CATEGORIES,
+          categoryGroups: [],
           txs: [],
           transfers: [],
           budgets: [],
@@ -99,7 +107,13 @@ export const useBookStore = create<BookState>()((set) => ({
         set({ ...seeded, hydrated: true, loadError: null });
       } else {
         lastSavedJson = JSON.stringify(snap);
-        set({ ...snap, hydrated: true, loadError: null });
+        set({
+          ...snap,
+          // 兼容旧后端返回的数据：分类组字段缺失时兜底为空数组
+          categoryGroups: snap.categoryGroups ?? [],
+          hydrated: true,
+          loadError: null,
+        });
       }
     } catch (e) {
       set({ hydrated: false, loadError: e instanceof Error ? e.message : String(e) });
@@ -116,6 +130,7 @@ export const useBookStore = create<BookState>()((set) => ({
       saveError: null,
       accounts: [],
       categories: [],
+      categoryGroups: [],
       txs: [],
       transfers: [],
       budgets: [],
@@ -153,6 +168,20 @@ export const useBookStore = create<BookState>()((set) => ({
       budgets: s.budgets.filter((b) => b.categoryId !== id),
     })),
 
+  // 分类组（大类）
+  addCategoryGroup: (g) =>
+    set((s) => ({ categoryGroups: [...s.categoryGroups, { ...g, id: uid(), createdAt: Date.now() }] })),
+  updateCategoryGroup: (id, patch) =>
+    set((s) => ({
+      categoryGroups: s.categoryGroups.map((g) => (g.id === id ? { ...g, ...patch } : g)),
+    })),
+  deleteCategoryGroup: (id) =>
+    set((s) => ({
+      categoryGroups: s.categoryGroups.filter((g) => g.id !== id),
+      // 删除大类时，其下小类自动脱离分组
+      categories: s.categories.map((c) => (c.groupId === id ? { ...c, groupId: undefined } : c)),
+    })),
+
   // 预算（同月同类目重复设置 = 更新）
   setBudget: (b) =>
     set((s) => {
@@ -179,6 +208,7 @@ export const useBookStore = create<BookState>()((set) => ({
     set({
       accounts: DEFAULT_ACCOUNTS,
       categories: DEFAULT_CATEGORIES,
+      categoryGroups: [],
       txs: [],
       transfers: [],
       budgets: [],
@@ -190,6 +220,7 @@ export const useBookStore = create<BookState>()((set) => ({
     set((s) => ({
       accounts: data.accounts ?? s.accounts,
       categories: data.categories ?? s.categories,
+      categoryGroups: data.categoryGroups ?? s.categoryGroups,
       txs: data.txs ?? s.txs,
       transfers: data.transfers ?? s.transfers,
       budgets: data.budgets ?? s.budgets,
@@ -208,6 +239,7 @@ let currentVersion = 0;
 function buildPayload(s: {
   accounts: Account[];
   categories: Category[];
+  categoryGroups: CategoryGroup[];
   txs: Tx[];
   transfers: Transfer[];
   budgets: Budget[];
@@ -217,6 +249,7 @@ function buildPayload(s: {
   return {
     accounts: s.accounts,
     categories: s.categories,
+    categoryGroups: s.categoryGroups,
     txs: s.txs,
     transfers: s.transfers,
     budgets: s.budgets,
@@ -233,6 +266,7 @@ useBookStore.subscribe((state, prevState) => {
   const dataChanged =
     state.accounts !== prevState.accounts ||
     state.categories !== prevState.categories ||
+    state.categoryGroups !== prevState.categoryGroups ||
     state.txs !== prevState.txs ||
     state.transfers !== prevState.transfers ||
     state.budgets !== prevState.budgets ||

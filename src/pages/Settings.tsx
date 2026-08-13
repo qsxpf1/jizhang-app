@@ -1,18 +1,21 @@
 import { useMemo, useRef, useState } from 'react';
 import { Button, Card, Divider, Input, Modal, Switch } from 'animal-island-ui';
-import type { Category } from '../types';
+import type { Category, CategoryGroup } from '../types';
 import { useBookStore } from '../store/useBookStore';
 import { useAuthStore } from '../store/useAuthStore';
 import { dateStr } from '../utils/calc';
 import { downloadJSON } from '../utils/storage';
 import CategoryModal from '../components/CategoryModal';
+import CategoryGroupModal from '../components/CategoryGroupModal';
 
 export default function Settings() {
   const settings = useBookStore((s) => s.settings);
   const categories = useBookStore((s) => s.categories);
+  const categoryGroups = useBookStore((s) => s.categoryGroups);
   const txs = useBookStore((s) => s.txs);
   const updateSettings = useBookStore((s) => s.updateSettings);
   const deleteCategory = useBookStore((s) => s.deleteCategory);
+  const deleteCategoryGroup = useBookStore((s) => s.deleteCategoryGroup);
   const username = useAuthStore((s) => s.username);
   const logout = useAuthStore((s) => s.logout);
 
@@ -20,6 +23,10 @@ export default function Settings() {
   const [editingCat, setEditingCat] = useState<Category | null>(null);
   const [newCatType, setNewCatType] = useState<'expense' | 'income'>('expense');
   const [delCat, setDelCat] = useState<Category | null>(null);
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<CategoryGroup | null>(null);
+  const [newGroupType, setNewGroupType] = useState<'expense' | 'income'>('expense');
+  const [delGroup, setDelGroup] = useState<CategoryGroup | null>(null);
 
   const [resetOpen, setResetOpen] = useState(false);
   const [seedOpen, setSeedOpen] = useState(false);
@@ -34,6 +41,7 @@ export default function Settings() {
       exportedAt: Date.now(),
       accounts: st.accounts,
       categories: st.categories,
+      categoryGroups: st.categoryGroups,
       txs: st.txs,
       transfers: st.transfers,
       budgets: st.budgets,
@@ -53,6 +61,7 @@ export default function Settings() {
         useBookStore.getState().importData({
           accounts: data.accounts,
           categories: data.categories,
+          categoryGroups: data.categoryGroups,
           txs: data.txs,
           transfers: data.transfers,
           budgets: data.budgets,
@@ -76,13 +85,24 @@ export default function Settings() {
     () => categories.filter((c) => c.type === 'income').sort((a, b) => a.sort - b.sort),
     [categories],
   );
+  const expenseGroups = useMemo(
+    () => categoryGroups.filter((g) => g.type === 'expense').sort((a, b) => a.sort - b.sort),
+    [categoryGroups],
+  );
 
   const countOf = (id: string) => txs.filter((t) => t.categoryId === id).length;
+  const groupCountOf = (id: string) => categories.filter((c) => c.groupId === id).length;
 
   const openAddCat = (type: 'expense' | 'income') => {
     setNewCatType(type);
     setEditingCat(null);
     setCatModalOpen(true);
+  };
+
+  const openAddGroup = (type: 'expense' | 'income') => {
+    setNewGroupType(type);
+    setEditingGroup(null);
+    setGroupModalOpen(true);
   };
 
   return (
@@ -143,6 +163,41 @@ export default function Settings() {
           placeholder="岛主名"
           onChange={(e) => updateSettings({ firstName: e.target.value })}
         />
+      </Card>
+
+      <div className="section-label">大类管理</div>
+      <Card>
+        <div className="cat-manage-head">
+          <span>支出大类</span>
+          <Button size="small" type="dashed" onClick={() => openAddGroup('expense')}>
+            ＋ 新增大类
+          </Button>
+        </div>
+        {expenseGroups.length === 0 && <p className="empty">暂无支出大类</p>}
+        {expenseGroups.map((g) => (
+          <div key={g.id} className="cat-manage-item">
+            <span className="cat-icon-sm" style={{ background: g.color }}>
+              {g.icon}
+            </span>
+            <span className="grow">
+              {g.name}
+              {groupCountOf(g.id) > 0 ? `（${groupCountOf(g.id)}个分类）` : ''}
+            </span>
+            <button
+              type="button"
+              aria-label="编辑大类"
+              onClick={() => {
+                setEditingGroup(g);
+                setGroupModalOpen(true);
+              }}
+            >
+              ✏️
+            </button>
+            <button type="button" aria-label="删除大类" onClick={() => setDelGroup(g)}>
+              🗑
+            </button>
+          </div>
+        ))}
       </Card>
 
       <div className="section-label">分类管理</div>
@@ -252,6 +307,13 @@ export default function Settings() {
         onClose={() => setCatModalOpen(false)}
       />
 
+      <CategoryGroupModal
+        open={groupModalOpen}
+        editing={editingGroup}
+        defaultType={newGroupType}
+        onClose={() => setGroupModalOpen(false)}
+      />
+
       <Modal
         open={resetOpen}
         title="清空全部数据？"
@@ -332,6 +394,38 @@ export default function Settings() {
           </>
         ) : (
           '确定删除该分类？'
+        )}
+      </Modal>
+
+      <Modal
+        open={delGroup !== null}
+        title="删除大类？"
+        onClose={() => setDelGroup(null)}
+        typewriter={false}
+        footer={
+          <>
+            <Button type="text" onClick={() => setDelGroup(null)}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              danger
+              onClick={() => {
+                if (delGroup) deleteCategoryGroup(delGroup.id);
+                setDelGroup(null);
+              }}
+            >
+              删除
+            </Button>
+          </>
+        }
+      >
+        {delGroup && groupCountOf(delGroup.id) > 0 ? (
+          <>
+            该大类下有 {groupCountOf(delGroup.id)} 个分类，删除后这些分类将不再归属任何大类。确定删除？
+          </>
+        ) : (
+          '确定删除该大类？'
         )}
       </Modal>
     </div>

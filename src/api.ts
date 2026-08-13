@@ -1,9 +1,10 @@
-import type { Account, Budget, Category, Goal, Settings, Transfer, Tx } from './types';
+import type { Account, Budget, Category, CategoryGroup, Goal, Settings, Transfer, Tx } from './types';
 
 /** 后端全量数据快照 */
 export interface Snapshot {
   accounts: Account[];
   categories: Category[];
+  categoryGroups: CategoryGroup[];
   txs: Tx[];
   transfers: Transfer[];
   budgets: Budget[];

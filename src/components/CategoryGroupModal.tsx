@@ -1,33 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button, Input, Modal } from 'animal-island-ui';
-import type { Category, TxType } from '../types';
+import type { CategoryGroup, TxType } from '../types';
 import { useBookStore } from '../store/useBookStore';
 import { CATEGORY_COLORS, CATEGORY_ICONS } from '../data/colors';
 
 interface Props {
   open: boolean;
-  editing: Category | null;
+  editing: CategoryGroup | null;
   /** 新增时的默认类型 */
   defaultType: TxType;
   onClose: () => void;
 }
 
-/** 新增 / 编辑分类弹窗 */
-export default function CategoryModal({ open, editing, defaultType, onClose }: Props) {
-  const addCategory = useBookStore((s) => s.addCategory);
-  const updateCategory = useBookStore((s) => s.updateCategory);
-  const categoryGroups = useBookStore((s) => s.categoryGroups);
+/** 新增 / 编辑分类组（大类）弹窗 */
+export default function CategoryGroupModal({ open, editing, defaultType, onClose }: Props) {
+  const addCategoryGroup = useBookStore((s) => s.addCategoryGroup);
+  const updateCategoryGroup = useBookStore((s) => s.updateCategoryGroup);
 
   const [name, setName] = useState('');
   const [type, setType] = useState<TxType>('expense');
   const [icon, setIcon] = useState(CATEGORY_ICONS[0]);
   const [color, setColor] = useState(CATEGORY_COLORS[0]);
-  const [groupId, setGroupId] = useState('');
-
-  const groups = useMemo(
-    () => categoryGroups.filter((g) => g.type === type).sort((a, b) => a.sort - b.sort),
-    [categoryGroups, type],
-  );
 
   useEffect(() => {
     if (!open) return;
@@ -36,29 +29,27 @@ export default function CategoryModal({ open, editing, defaultType, onClose }: P
       setType(editing.type);
       setIcon(editing.icon);
       setColor(editing.color);
-      setGroupId(editing.groupId ?? '');
     } else {
       setName('');
       setType(defaultType);
       setIcon(CATEGORY_ICONS[0]);
       setColor(CATEGORY_COLORS[0]);
-      setGroupId('');
     }
   }, [open, editing, defaultType]);
 
   const save = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const payload = { name: trimmed, type, icon, color, groupId: groupId || undefined };
-    if (editing) updateCategory(editing.id, payload);
-    else addCategory({ ...payload, sort: 99, isDefault: false });
+    const payload = { name: trimmed, type, icon, color };
+    if (editing) updateCategoryGroup(editing.id, payload);
+    else addCategoryGroup({ ...payload, sort: 99 });
     onClose();
   };
 
   return (
     <Modal
       open={open}
-      title={editing ? '编辑分类' : '新增分类'}
+      title={editing ? '编辑大类' : '新增大类'}
       width={480}
       onClose={onClose}
       typewriter={false}
@@ -74,9 +65,9 @@ export default function CategoryModal({ open, editing, defaultType, onClose }: P
       }
     >
       <div className="modal-form">
-        <div className="form-label">分类名称</div>
+        <div className="form-label">大类名称</div>
         <Input
-          placeholder="例如：宠物"
+          placeholder="例如：日常消费"
           value={name}
           onChange={(e) => setName(e.target.value)}
         />
@@ -98,31 +89,6 @@ export default function CategoryModal({ open, editing, defaultType, onClose }: P
             收入
           </button>
         </div>
-
-        {groups.length > 0 && (
-          <>
-            <div className="form-label">所属大类</div>
-            <div className="group-select">
-              <button
-                type="button"
-                className={groupId === '' ? 'group-opt active' : 'group-opt'}
-                onClick={() => setGroupId('')}
-              >
-                无
-              </button>
-              {groups.map((g) => (
-                <button
-                  key={g.id}
-                  type="button"
-                  className={groupId === g.id ? 'group-opt active' : 'group-opt'}
-                  onClick={() => setGroupId(g.id)}
-                >
-                  {g.icon} {g.name}
-                </button>
-              ))}
-            </div>
-          </>
-        )}
 
         <div className="form-label">图标</div>
         <div className="icon-picker">

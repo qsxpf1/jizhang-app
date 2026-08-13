@@ -16,7 +16,14 @@ import {
   YAxis,
 } from 'recharts';
 import { useBookStore } from '../store/useBookStore';
-import { categoryTotals, currentMonth, dailyTotals, monthSummary, monthlyTotals } from '../utils/calc';
+import {
+  categoryTotals,
+  currentMonth,
+  dailyTotals,
+  groupTotals,
+  monthSummary,
+  monthlyTotals,
+} from '../utils/calc';
 import { formatMoney, formatMoneyPlain } from '../utils/money';
 import { downloadJSON } from '../utils/storage';
 import MonthNav from '../components/MonthNav';
@@ -30,16 +37,58 @@ interface PieDatum {
 export default function Stats() {
   const txs = useBookStore((s) => s.txs);
   const categories = useBookStore((s) => s.categories);
+  const categoryGroups = useBookStore((s) => s.categoryGroups);
   const settings = useBookStore((s) => s.settings);
 
   const [ym, setYm] = useState(currentMonth());
+  const [groupView, setGroupView] = useState(false);
   const year = Number(ym.slice(0, 4));
 
   const catOf = (id: string) => categories.find((c) => c.id === id);
+  const groupOf = (id: string) => categoryGroups.find((g) => g.id === id);
+
+  // 大类视图下用 resolveKey 解析 key（可能是大类 id 或分类 id）
+  const resolveKey = (key: string) => {
+    const g = groupOf(key);
+    if (g) return { name: g.name, icon: g.icon, color: g.color };
+    const c = catOf(key);
+    if (c) return { name: c.name, icon: c.icon, color: c.color };
+    return { name: '未知', icon: '❓', color: '#9a835a' };
+  };
 
   const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
   const expCat = useMemo(() => categoryTotals(txs, ym, 'expense'), [txs, ym]);
   const incCat = useMemo(() => categoryTotals(txs, ym, 'income'), [txs, ym]);
+  const expGroup = useMemo(
+    () => groupTotals(txs, ym, 'expense', categories, categoryGroups),
+    [txs, ym, categories, categoryGroups],
+  );
+  const hasExpGroups = categoryGroups.some((g) => g.type === 'expense');
+
+  // 大类视图下：每个大类的子分类明细
+  const groupSubs = useMemo(() => {
+    const m = new Map<string, { id: string; name: string; icon: string; value: number; color: string }[]>();
+    for (const t of txs) {
+      if (t.type !== 'expense' || !t.date.startsWith(ym)) continue;
+      const cat = catOf(t.categoryId);
+      const gid = cat?.groupId && groupOf(cat.groupId) ? cat.groupId : undefined;
+      if (!gid) continue;
+      let arr = m.get(gid);
+      if (!arr) {
+        arr = [];
+        m.set(gid, arr);
+      }
+      const found = arr.find((x) => x.id === t.categoryId);
+      if (found) found.value += t.amount;
+      else arr.push({ id: t.categoryId, name: cat?.name ?? '未知', icon: cat?.icon ?? '❓', value: t.amount, color: cat?.color ?? '#9a835a' });
+    }
+    for (const arr of m.values()) {
+      arr.forEach((x) => (x.value = Math.round(x.value * 100) / 100));
+      arr.sort((a, b) => b.value - a.value);
+    }
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txs, ym, categories, categoryGroups]);
   const dailyExp = useMemo(() => dailyTotals(txs, ym, 'expense'), [txs, ym]);
   const dailyInc = useMemo(() => dailyTotals(txs, ym, 'income'), [txs, ym]);
   const monthly = useMemo(() => {
@@ -48,14 +97,14 @@ export default function Stats() {
     return exp.map((e, i) => ({ month: e.month, 支出: e.value, 收入: inc[i].value }));
   }, [txs, year]);
 
-  // 饼图：支出分类占比，最多 7 类，其余聚合为「其他」
+  // 饼图：支出分类/大类占比，最多 7 类，其余聚合为「其他」
   const pieData = useMemo<PieDatum[]>(() => {
-    let arr: PieDatum[] = [...expCat.entries()]
-      .map(([id, value]) => ({
-        name: catOf(id)?.name ?? '未知',
-        value,
-        color: catOf(id)?.color ?? '#9a835a',
-      }))
+    const map = groupView ? expGroup : expCat;
+    let arr: PieDatum[] = [...map.entries()]
+      .map(([key, value]) => {
+        const info = resolveKey(key);
+        return { name: info.name, value, color: info.color };
+      })
       .sort((a, b) => b.value - a.value);
     if (arr.length > 7) {
       const top = arr.slice(0, 7);
@@ -64,7 +113,7 @@ export default function Stats() {
     }
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expCat, categories]);
+  }, [expCat, expGroup, groupView]);
 
   const lineData = useMemo(
     () => dailyExp.map((d, i) => ({ day: d.day, 支出: d.value, 收入: dailyInc[i].value })),
@@ -73,12 +122,24 @@ export default function Stats() {
 
   // 报表分类明细（支出/收入）
   const expRows = useMemo(
-    () =>
-      [...expCat.entries()]
-        .map(([id, value]) => ({ id, name: catOf(id)?.name ?? '未知', icon: catOf(id)?.icon ?? '❓', value, color: catOf(id)?.color ?? '#9a835a' }))
-        .sort((a, b) => b.value - a.value),
+    () => {
+      const map = groupView ? expGroup : expCat;
+      return [...map.entries()]
+        .map(([key, value]) => {
+          const info = resolveKey(key);
+          return {
+            id: key,
+            name: info.name,
+            icon: info.icon,
+            value,
+            color: info.color,
+            subs: groupView ? groupSubs.get(key) : undefined,
+          };
+        })
+        .sort((a, b) => b.value - a.value);
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [expCat, categories],
+    [expCat, expGroup, groupView, groupSubs],
   );
   const incRows = useMemo(
     () =>
@@ -137,7 +198,27 @@ export default function Stats() {
 
       <div className="chart-grid">
         <Card className="mt16">
-          <h3 className="chart-title">支出分类占比</h3>
+          <div className="card-head">
+            <h3 className="chart-title">{groupView ? '支出大类占比' : '支出分类占比'}</h3>
+            {hasExpGroups && (
+              <div className="view-toggle">
+                <button
+                  type="button"
+                  className={!groupView ? 'active' : ''}
+                  onClick={() => setGroupView(false)}
+                >
+                  按分类
+                </button>
+                <button
+                  type="button"
+                  className={groupView ? 'active' : ''}
+                  onClick={() => setGroupView(true)}
+                >
+                  按大类
+                </button>
+              </div>
+            )}
+          </div>
           {pieData.length === 0 ? (
             <p className="empty">本月暂无支出</p>
           ) : (
@@ -251,6 +332,21 @@ export default function Stats() {
                       <div className="report-track">
                         <div className="report-fill" style={{ width: `${pct}%`, background: r.color }} />
                       </div>
+                      {r.subs && r.subs.length > 0 && (
+                        <div className="report-subs">
+                          {r.subs.map((s) => {
+                            const spct = r.value > 0 ? (s.value / r.value) * 100 : 0;
+                            return (
+                              <div key={s.id} className="report-sub">
+                                <span className="report-sub-icon">{s.icon}</span>
+                                <span className="report-sub-name">{s.name}</span>
+                                <span className="report-sub-val">{money(s.value)}</span>
+                                <span className="report-sub-pct">{spct.toFixed(1)}%</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

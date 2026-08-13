@@ -614,66 +614,70 @@ h4 {
   margin: 12px 0 0;
 }
 
+.cat-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cat-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cat-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ac-sub);
+}
+
+.cat-group-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.cat-group-name {
+  letter-spacing: 0.03em;
+}
+
+/* 分类 grid：折叠与非折叠都用固定 72px 宽卡片，保证图标间距 / 大小完全一致 */
 .cat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .cat-grid-wrap {
-  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.cat-grid-wrap .cat-grid {
+  flex: 1;
+  min-width: 0;
 }
 
 .cat-grid.collapsed {
-  max-height: 78px;
+  flex-wrap: nowrap;
   overflow: hidden;
-  mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
 }
 
-.cat-expand-btn {
-  position: absolute;
-  top: 50%;
-  right: 4px;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 8px 6px;
-  border: 2.5px solid var(--ac-input-border);
-  border-radius: 14px;
-  background: rgba(248, 248, 240, 0.9);
-  backdrop-filter: blur(4px);
-  cursor: pointer;
-  min-width: 44px;
-  transition: all 0.2s;
-  z-index: 2;
-}
-
-.cat-expand-btn:hover {
-  border-color: var(--ac-primary);
-  background: var(--ac-primary-light);
-}
-
-.cat-expand-dots {
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--ac-sub);
-  line-height: 1;
-}
-
-.cat-expand-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--ac-sub);
+.cat-grid.collapsed .cat-chip {
+  flex-shrink: 0;
 }
 
 .cat-chip {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  width: 72px;
   padding: 10px 4px;
   border: 2.5px solid var(--ac-input-border);
   border-radius: 14px;
@@ -690,6 +694,35 @@ h4 {
   box-shadow: 0 3px 0 0 rgba(25, 200, 185, 0.35);
 }
 
+.cat-more-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 72px;
+  padding: 10px 4px;
+  border: 2.5px dashed var(--ac-input-border);
+  border-radius: 14px;
+  background: var(--ac-bg);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  color: var(--ac-sub);
+}
+
+.cat-more-chip:hover {
+  border-color: var(--ac-primary);
+  background: var(--ac-primary-light);
+}
+
+.cat-more-dots {
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 2px;
+}
+
 .cat-icon {
   font-size: 22px;
   line-height: 1;
@@ -699,6 +732,10 @@ h4 {
   font-size: 12px;
   font-weight: 600;
   color: var(--ac-text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .acc-chips {
@@ -810,6 +847,38 @@ h4 {
   box-shadow: 0 0 0 2px var(--ac-focus);
 }
 
+/* ---------- 分类所属大类选择 ---------- */
+.group-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.group-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border: 2.5px solid var(--ac-input-border);
+  border-radius: 50px;
+  background: var(--ac-bg);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ac-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.group-opt:hover {
+  border-color: var(--ac-primary);
+}
+
+.group-opt.active {
+  border-color: var(--ac-primary);
+  background: var(--ac-primary-light);
+  box-shadow: 0 3px 0 0 rgba(25, 200, 185, 0.35);
+}
+
 /* ---------- 日期选择 ---------- */
 .date-picker {
   display: flex;
@@ -894,6 +963,35 @@ h4 {
 .note-textarea::placeholder {
   color: var(--ac-disabled);
   font-weight: 600;
+}
+
+/* ---------- 首页查看更多 ---------- */
+.home-more-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  border: 2px dashed var(--ac-input-border);
+  border-radius: 14px;
+  background: transparent;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ac-primary-active);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.home-more-btn:hover {
+  background: var(--ac-primary-light);
+  border-color: var(--ac-primary);
+}
+
+.home-end-tip {
+  text-align: center;
+  color: var(--ac-sub);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 14px 0 0;
 }
 
 /* ---------- 地点历史下拉 ---------- */
@@ -1376,6 +1474,77 @@ h4 {
 
 .chart-title {
   font-size: 16px;
+}
+
+/* ---------- 统计视图切换（按分类 / 按大类） ---------- */
+.view-toggle {
+  display: flex;
+  background: var(--ac-bg);
+  border: 2px solid var(--ac-input-border);
+  border-radius: 50px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.view-toggle button {
+  border: none;
+  background: transparent;
+  border-radius: 50px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ac-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.view-toggle button.active {
+  background: var(--ac-primary);
+  color: #fff;
+  box-shadow: 0 2px 0 0 var(--ac-primary-active);
+}
+
+/* ---------- 大类报表子分类明细 ---------- */
+.report-subs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding-left: 4px;
+  border-left: 2px dashed var(--ac-disabled);
+}
+
+.report-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ac-sub);
+}
+
+.report-sub-icon {
+  font-size: 12px;
+}
+
+.report-sub-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.report-sub-val {
+  font-weight: 700;
+  color: var(--ac-text);
+}
+
+.report-sub-pct {
+  color: var(--ac-sub);
+  font-size: 11px;
+  min-width: 40px;
+  text-align: right;
 }
 
 .chart-wrap {

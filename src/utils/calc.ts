@@ -1,5 +1,10 @@
-import type { Account, Tx, Transfer, TxType } from '../types';
+import type { Account, Category, CategoryGroup, Tx, Transfer, TxType } from '../types';
 import { round2 } from './money';
+
+/** Date → 'HH:mm' */
+export function timeStr(d: Date): string {
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
 
 /** Date → 'YYYY-MM-DD' */
 export function dateStr(d: Date): string {
@@ -68,6 +73,29 @@ export function categoryTotals(txs: Tx[], ym: string, type: TxType): Map<string,
   for (const t of txs) {
     if (t.type !== type || !t.date.startsWith(ym)) continue;
     m.set(t.categoryId, round2((m.get(t.categoryId) ?? 0) + t.amount));
+  }
+  return m;
+}
+
+/**
+ * 某月某类型按大类（分类组）汇总。
+ * 有归属大类的分类累加到大类下；无归属（或无大类）的分类作为独立项。
+ * 返回 Map<groupId | categoryId, amount>
+ */
+export function groupTotals(
+  txs: Tx[],
+  ym: string,
+  type: TxType,
+  categories: Category[],
+  groups: CategoryGroup[],
+): Map<string, number> {
+  const catById = new Map(categories.map((c) => [c.id, c]));
+  const m = new Map<string, number>();
+  for (const t of txs) {
+    if (t.type !== type || !t.date.startsWith(ym)) continue;
+    const cat = catById.get(t.categoryId);
+    const gid = cat?.groupId && groups.some((g) => g.id === cat.groupId) ? cat.groupId : t.categoryId;
+    m.set(gid, round2((m.get(gid) ?? 0) + t.amount));
   }
   return m;
 }

@@ -21,7 +21,13 @@ export default function Home() {
   const ym = currentMonth();
   const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
   const monthTxs = useMemo(() => txs.filter((t) => t.date.startsWith(ym)).sort(sortTx), [txs, ym]);
-  const groups = useMemo(() => groupByDate(monthTxs), [monthTxs]);
+
+  const [showAll, setShowAll] = useState(false);
+  const visibleTxs = useMemo(
+    () => (showAll ? monthTxs : monthTxs.slice(0, 5)),
+    [monthTxs, showAll],
+  );
+  const groups = useMemo(() => groupByDate(visibleTxs), [visibleTxs]);
 
   // 首页快速记账：保存后清空表单并提示
   const [resetKey, setResetKey] = useState(0);
@@ -88,6 +94,15 @@ export default function Home() {
         onDelete={setDelTarget}
         emptyText="本月还没有账目，用上面的「记一笔」记下第一笔吧 ✍️"
       />
+
+      {!showAll && monthTxs.length > 5 && (
+        <button className="home-more-btn" onClick={() => setShowAll(true)}>
+          查看更多 ›
+        </button>
+      )}
+      {showAll && monthTxs.length > 5 && (
+        <p className="home-end-tip">— 到底啦... ... —</p>
+      )}
 
       <div className="quick-grid">
         <Link to="/budget">

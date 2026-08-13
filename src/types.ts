@@ -35,6 +35,19 @@ export interface Account {
   createdAt: number;
 }
 
+/** 分类组（大类）：可将若干分类归为一组，方便统计 */
+export interface CategoryGroup {
+  id: string;
+  name: string;
+  type: TxType;
+  /** emoji 图标 */
+  icon: string;
+  /** 图表颜色（hex） */
+  color: string;
+  sort: number;
+  createdAt: number;
+}
+
 /** 分类 */
 export interface Category {
   id: string;
@@ -46,6 +59,8 @@ export interface Category {
   color: string;
   isDefault?: boolean;
   sort: number;
+  /** 所属分类组 ID（大类） */
+  groupId?: string;
 }
 
 /** 支付方式（付款渠道，区别于账户=钱包余额） */

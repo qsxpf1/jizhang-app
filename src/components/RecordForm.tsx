@@ -3,7 +3,7 @@ import { Button, Input } from 'animal-island-ui';
 import type { PaymentMethod, Tx, TxType } from '../types';
 import { PAY_METHODS } from '../data/payMethods';
 import { useBookStore } from '../store/useBookStore';
-import { dateStr } from '../utils/calc';
+import { dateStr, timeStr } from '../utils/calc';
 import { round2 } from '../utils/money';
 import DatePicker from './DatePicker';
 
@@ -48,7 +48,7 @@ export default function RecordForm({
   const [categoryId, setCategoryId] = useState('');
   const [accountId, setAccountId] = useState('');
   const [date, setDate] = useState(() => dateStr(new Date()));
-  const [time, setTime] = useState('');
+  const [time, setTime] = useState(() => timeStr(new Date()));
   const [location, setLocation] = useState('');
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const locationRef = useRef<HTMLDivElement>(null);
@@ -58,11 +58,27 @@ export default function RecordForm({
   const [expandedCat, setExpandedCat] = useState(false);
   const [expandedAcc, setExpandedAcc] = useState(false);
   const [expandedPay, setExpandedPay] = useState(false);
+  const catWrapRef = useRef<HTMLDivElement>(null);
+  const [catVisibleCount, setCatVisibleCount] = useState(MAX_VISIBLE_CATS);
 
   const cats = useMemo(
     () => categories.filter((c) => c.type === type).sort((a, b) => a.sort - b.sort),
     [categories, type],
   );
+
+  const categoryGroups = useBookStore((s) => s.categoryGroups);
+  // 大类 → 其下小类；无大类的小类归入 ungroupedCats
+  const groupedCats = useMemo(() => {
+    const gs = categoryGroups
+      .filter((g) => g.type === type)
+      .sort((a, b) => a.sort - b.sort)
+      .map((g) => ({ ...g, cats: cats.filter((c) => c.groupId === g.id) }));
+    return gs.filter((g) => g.cats.length > 0);
+  }, [categoryGroups, cats, type]);
+  const ungroupedCats = useMemo(() => {
+    const gids = new Set(categoryGroups.map((g) => g.id));
+    return cats.filter((c) => !c.groupId || !gids.has(c.groupId));
+  }, [cats, categoryGroups]);
 
   const txs = useBookStore((s) => s.txs);
   const locationHistory = useMemo(() => {
@@ -98,7 +114,7 @@ export default function RecordForm({
       setType('expense');
       setAmount('');
       setDate(dateStr(new Date()));
-      setTime('');
+      setTime(timeStr(new Date()));
       setLocation('');
       setPayMethod('');
       setNote('');
@@ -122,6 +138,25 @@ export default function RecordForm({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // 折叠状态下按容器宽度计算一行能放下多少个分类卡片（72px/个 + 8px 间距）
+  useEffect(() => {
+    if (expandedCat) return;
+    const el = catWrapRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      const CHIP = 72;
+      const GAP = 8;
+      const MORE = 72; // 始终为 "···" 按钮预留一个卡位
+      const n = Math.max(1, Math.floor((w - MORE) / (CHIP + GAP)));
+      setCatVisibleCount(n);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [expandedCat, cats.length]);
 
   const switchType = (t: TxType) => {
     setType(t);
@@ -186,32 +221,82 @@ export default function RecordForm({
       </div>
 
       <div className="form-label">分类</div>
-      <div className="cat-grid-wrap">
-        <div className={`cat-grid ${!expandedCat && cats.length > MAX_VISIBLE_CATS ? 'collapsed' : ''}`}>
-          {cats.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
-              style={
-                categoryId === c.id
-                  ? { borderColor: c.color, background: `${c.color}22` }
-                  : undefined
-              }
-              onClick={() => setCategoryId(c.id)}
-            >
-              <span className="cat-icon">{c.icon}</span>
-              <span className="cat-name">{c.name}</span>
+      {!expandedCat ? (
+        <div className="cat-grid-wrap" ref={catWrapRef}>
+          <div className="cat-grid collapsed">
+            {cats.slice(0, catVisibleCount).map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
+                style={
+                  categoryId === c.id
+                    ? { borderColor: c.color, background: `${c.color}22` }
+                    : undefined
+                }
+                onClick={() => setCategoryId(c.id)}
+              >
+                <span className="cat-icon">{c.icon}</span>
+                <span className="cat-name">{c.name}</span>
+              </button>
+            ))}
+          </div>
+          {cats.length > catVisibleCount && (
+            <button type="button" className="cat-more-chip" onClick={() => setExpandedCat(true)}>
+              <span className="cat-more-dots">···</span>
             </button>
-          ))}
+          )}
         </div>
-        {!expandedCat && cats.length > MAX_VISIBLE_CATS && (
-          <button type="button" className="cat-expand-btn" onClick={() => setExpandedCat(true)}>
-            <span className="cat-expand-dots">···</span>
-            <span className="cat-expand-label">展开</span>
-          </button>
-        )}
-      </div>
+      ) : (
+        <div className="cat-groups">
+          {groupedCats.map((g) => (
+            <div key={g.id} className="cat-group">
+              <div className="cat-group-head">
+                <span className="cat-group-icon">{g.icon}</span>
+                <span className="cat-group-name">{g.name}</span>
+              </div>
+              <div className="cat-grid">
+                {g.cats.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
+                    style={
+                      categoryId === c.id
+                        ? { borderColor: c.color, background: `${c.color}22` }
+                        : undefined
+                    }
+                    onClick={() => setCategoryId(c.id)}
+                  >
+                    <span className="cat-icon">{c.icon}</span>
+                    <span className="cat-name">{c.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {ungroupedCats.length > 0 && (
+            <div className="cat-grid">
+              {ungroupedCats.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
+                  style={
+                    categoryId === c.id
+                      ? { borderColor: c.color, background: `${c.color}22` }
+                      : undefined
+                  }
+                  onClick={() => setCategoryId(c.id)}
+                >
+                  <span className="cat-icon">{c.icon}</span>
+                  <span className="cat-name">{c.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {cats.length === 0 && <p className="form-tip">该类型下暂无分类，可在「设置」中添加</p>}
 
       <div className="form-label">账户</div>
