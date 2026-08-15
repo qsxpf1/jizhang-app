@@ -130,6 +130,86 @@ export function monthlyTotals(
   return arr;
 }
 
+// ---- 日期范围（自定义账期）工具函数 ----
+
+/**
+ * 取当月的第一天和最后一天（YYYY-MM-DD）
+ */
+export function monthRange(ym: string): { start: string; end: string } {
+  const [y, m] = ym.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  return {
+    start: `${ym}-01`,
+    end: `${ym}-${String(daysInMonth).padStart(2, '0')}`,
+  };
+}
+
+/**
+ * 日期范围内收支汇总
+ */
+export function rangeSummary(txs: Tx[], start: string, end: string): MonthSummary {
+  let income = 0;
+  let expense = 0;
+  for (const t of txs) {
+    if (t.date < start || t.date > end) continue;
+    if (t.type === 'income') income += t.amount;
+    else expense += t.amount;
+  }
+  return { income: round2(income), expense: round2(expense), balance: round2(income - expense) };
+}
+
+/**
+ * 日期范围内某类型的分类小计
+ */
+export function rangeCategoryTotals(txs: Tx[], start: string, end: string, type: TxType): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const t of txs) {
+    if (t.type !== type || t.date < start || t.date > end) continue;
+    m.set(t.categoryId, round2((m.get(t.categoryId) ?? 0) + t.amount));
+  }
+  return m;
+}
+
+/**
+ * 日期范围内某类型按大类汇总
+ */
+export function rangeGroupTotals(
+  txs: Tx[],
+  start: string,
+  end: string,
+  type: TxType,
+  categories: Category[],
+  groups: CategoryGroup[],
+): Map<string, number> {
+  const catById = new Map(categories.map((c) => [c.id, c]));
+  const m = new Map<string, number>();
+  for (const t of txs) {
+    if (t.type !== type || t.date < start || t.date > end) continue;
+    const cat = catById.get(t.categoryId);
+    const gid = cat?.groupId && groups.some((g) => g.id === cat.groupId) ? cat.groupId : t.categoryId;
+    m.set(gid, round2((m.get(gid) ?? 0) + t.amount));
+  }
+  return m;
+}
+
+/**
+ * 日期范围内每日小计（含范围内每天）
+ */
+export function rangeDailyTotals(txs: Tx[], start: string, end: string, type: TxType): { day: string; value: number }[] {
+  const startD = new Date(start);
+  const endD = new Date(end);
+  const arr: { day: string; value: number }[] = [];
+  const d = new Date(startD);
+  while (d <= endD) {
+    const key = dateStr(d);
+    let v = 0;
+    for (const t of txs) if (t.date === key && t.type === type) v += t.amount;
+    arr.push({ day: key.slice(5), value: round2(v) });
+    d.setDate(d.getDate() + 1);
+  }
+  return arr;
+}
+
 /** 当前连续记账天数（今天没记则从昨天开始数） */
 export function currentStreak(txs: Tx[]): number {
   const days = new Set(txs.map((t) => t.date));

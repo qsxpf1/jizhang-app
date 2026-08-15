@@ -13,6 +13,7 @@ export default function Home() {
   const txs = useBookStore((s) => s.txs);
   const categories = useBookStore((s) => s.categories);
   const accounts = useBookStore((s) => s.accounts);
+  const budgets = useBookStore((s) => s.budgets);
   const settings = useBookStore((s) => s.settings);
   const addTx = useBookStore((s) => s.addTx);
   const deleteTx = useBookStore((s) => s.deleteTx);
@@ -20,6 +21,11 @@ export default function Home() {
 
   const ym = currentMonth();
   const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
+  const totalBudget = useMemo(
+    () => budgets.filter((b) => b.categoryId !== null && b.month === ym).reduce((s, b) => s + b.amount, 0),
+    [budgets, ym],
+  );
+  const budgetRemaining = totalBudget - sum.expense;
   const monthTxs = useMemo(() => txs.filter((t) => t.date.startsWith(ym)).sort(sortTx), [txs, ym]);
 
   const [showAll, setShowAll] = useState(false);
@@ -67,6 +73,12 @@ export default function Home() {
           <div className="stat-card">
             <span>结余</span>
             <strong>{formatMoney(sum.balance, settings)}</strong>
+          </div>
+        </Card>
+        <Card color={totalBudget > 0 ? (budgetRemaining >= 0 ? 'app-teal' : 'app-red') : 'default'}>
+          <div className="stat-card">
+            <span>预算结余</span>
+            <strong>{totalBudget > 0 ? formatMoney(budgetRemaining, settings) : '未设置'}</strong>
           </div>
         </Card>
       </div>

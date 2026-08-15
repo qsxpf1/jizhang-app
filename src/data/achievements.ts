@@ -12,7 +12,6 @@ export interface AchCtx {
   /** 本月是否超支 */
   overBudget: boolean;
   goalDone: number;
-  bellMode: boolean;
 }
 
 export interface AchievementDef {
@@ -130,11 +129,4 @@ export const ACHIEVEMENTS: AchievementDef[] = [
       detail: `${Math.round(Math.min(c.totalIncome, 10000) / 10000 * 100)}%`,
     }),
   },
-  {
-    id: 'bell-mode',
-    icon: '🪙',
-    name: '铃钱收藏家',
-    desc: '开启铃钱模式',
-    check: (c) => ({ unlocked: c.bellMode, progress: c.bellMode ? 1 : 0, detail: c.bellMode ? '已开启' : '未开启' }),
-  },
-];
+  ];

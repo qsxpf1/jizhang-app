@@ -21,14 +21,13 @@ const NAV: NavItem[] = [
   { path: '/list', label: '流水', icon: '📋', mobile: true },
   { path: '/stats', label: '统计', icon: '📊', mobile: true },
   { path: '/accounts', label: '账户', icon: '💰', mobile: true },
-  { path: '/budget', label: '预算', icon: '🎯', mobile: false },
-  { path: '/goals', label: '存钱', icon: '⛳', mobile: false },
-  { path: '/achievements', label: '成就', icon: '🏆', mobile: false },
+  { path: '/budget', label: '预算', icon: '🎯', mobile: true },
+  { path: '/goals', label: '存钱', icon: '⛳', mobile: true },
+  { path: '/achievements', label: '成就', icon: '🏆', mobile: true },
   { path: '/settings', label: '设置', icon: '⚙️', mobile: true },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
-  const bellMode = useBookStore((s) => s.settings.bellMode);
   const openRecord = useUiStore((s) => s.openRecord);
   const hydrated = useBookStore((s) => s.hydrated);
   const loadError = useBookStore((s) => s.loadError);
@@ -103,7 +102,6 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="app-sidebar-foot">
-            {bellMode && <span className="bell-chip">🪙 铃钱模式</span>}
           </div>
         </aside>
 

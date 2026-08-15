@@ -24,7 +24,6 @@ export default function Achievements() {
       currentBudgetSet: !!totalBudget,
       overBudget: totalBudget ? currentExpense > totalBudget.amount : false,
       goalDone: goals.filter((g) => g.savedAmount >= g.targetAmount).length,
-      bellMode: settings.bellMode,
     };
   }, [txs, budgets, goals, settings]);
 

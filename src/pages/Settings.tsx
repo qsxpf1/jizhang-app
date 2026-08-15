@@ -127,31 +127,6 @@ export default function Settings() {
       <Card className="mt16">
         <div className="settings-row">
           <div className="grow">
-            <div className="settings-name">🪙 铃钱模式</div>
-            <div className="settings-desc">所有金额以铃钱显示（动森汇率）</div>
-          </div>
-          <Switch checked={settings.bellMode} onChange={(v) => updateSettings({ bellMode: v })} />
-        </div>
-        {settings.bellMode && (
-          <div className="settings-sub">
-            <span>1 元 = </span>
-            <Input
-              className="rate-input"
-              type="number"
-              min={0}
-              value={String(settings.bellRate)}
-              onChange={(e) =>
-                updateSettings({ bellRate: Math.max(0, Number(e.target.value) || 0) })
-              }
-            />
-            <span> 铃</span>
-          </div>
-        )}
-      </Card>
-
-      <Card className="mt16">
-        <div className="settings-row">
-          <div className="grow">
             <div className="settings-name">🏝️ 岛主名</div>
             <div className="settings-desc">首页问候语中显示的名字</div>
           </div>

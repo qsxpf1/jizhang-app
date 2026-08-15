@@ -66,7 +66,7 @@ interface BookState {
   importData: (data: Partial<Snapshot>) => void;
 }
 
-const defaultSettings: Settings = { bellMode: false, bellRate: 10, firstName: '岛主' };
+const defaultSettings: Settings = { firstName: '岛主' };
 
 export const useBookStore = create<BookState>()((set) => ({
   hydrated: false,

@@ -12,8 +12,7 @@ const TYPE_TABS: { key: TxType; label: string }[] = [
   { key: 'income', label: '收入' },
 ];
 
-/** 折叠状态下一行最多展示多少项 */
-const MAX_VISIBLE_CATS = 5;
+/** 折叠状态下最多展示多少项 */
 const MAX_VISIBLE_ACCS = 3;
 const MAX_VISIBLE_PAYS = 3;
 
@@ -55,11 +54,8 @@ export default function RecordForm({
   const [payMethod, setPayMethod] = useState<PaymentMethod | ''>('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
-  const [expandedCat, setExpandedCat] = useState(false);
   const [expandedAcc, setExpandedAcc] = useState(false);
   const [expandedPay, setExpandedPay] = useState(false);
-  const catWrapRef = useRef<HTMLDivElement>(null);
-  const [catVisibleCount, setCatVisibleCount] = useState(MAX_VISIBLE_CATS);
 
   const cats = useMemo(
     () => categories.filter((c) => c.type === type).sort((a, b) => a.sort - b.sort),
@@ -106,8 +102,7 @@ export default function RecordForm({
       setLocation(editing.location ?? '');
       setPayMethod(editing.payMethod ?? '');
       setNote(editing.note ?? '');
-      // 编辑时展开所有区块以确保选中项可见
-      setExpandedCat(true);
+      // 编辑时展开账户和支付方式区块以确保选中项可见
       setExpandedAcc(true);
       setExpandedPay(true);
     } else {
@@ -122,7 +117,6 @@ export default function RecordForm({
       setAccountId(accounts[0]?.id ?? '');
     }
     setError('');
-    setExpandedCat(false);
     setExpandedAcc(false);
     setExpandedPay(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -139,25 +133,7 @@ export default function RecordForm({
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // 折叠状态下按容器宽度计算一行能放下多少个分类卡片（72px/个 + 8px 间距）
-  useEffect(() => {
-    if (expandedCat) return;
-    const el = catWrapRef.current;
-    if (!el) return;
-    const measure = () => {
-      const w = el.clientWidth;
-      const CHIP = 72;
-      const GAP = 8;
-      const MORE = 72; // 始终为 "···" 按钮预留一个卡位
-      const n = Math.max(1, Math.floor((w - MORE) / (CHIP + GAP)));
-      setCatVisibleCount(n);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [expandedCat, cats.length]);
-
+  
   const switchType = (t: TxType) => {
     setType(t);
     setCategoryId(categories.filter((c) => c.type === t)[0]?.id ?? '');
@@ -221,63 +197,15 @@ export default function RecordForm({
       </div>
 
       <div className="form-label">分类</div>
-      {!expandedCat ? (
-        <div className="cat-grid-wrap" ref={catWrapRef}>
-          <div className="cat-grid collapsed">
-            {cats.slice(0, catVisibleCount).map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
-                style={
-                  categoryId === c.id
-                    ? { borderColor: c.color, background: `${c.color}22` }
-                    : undefined
-                }
-                onClick={() => setCategoryId(c.id)}
-              >
-                <span className="cat-icon">{c.icon}</span>
-                <span className="cat-name">{c.name}</span>
-              </button>
-            ))}
-          </div>
-          {cats.length > catVisibleCount && (
-            <button type="button" className="cat-more-chip" onClick={() => setExpandedCat(true)}>
-              <span className="cat-more-dots">···</span>
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="cat-groups">
-          {groupedCats.map((g) => (
-            <div key={g.id} className="cat-group">
-              <div className="cat-group-head">
-                <span className="cat-group-icon">{g.icon}</span>
-                <span className="cat-group-name">{g.name}</span>
-              </div>
-              <div className="cat-grid">
-                {g.cats.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
-                    style={
-                      categoryId === c.id
-                        ? { borderColor: c.color, background: `${c.color}22` }
-                        : undefined
-                    }
-                    onClick={() => setCategoryId(c.id)}
-                  >
-                    <span className="cat-icon">{c.icon}</span>
-                    <span className="cat-name">{c.name}</span>
-                  </button>
-                ))}
-              </div>
+      <div className="cat-groups">
+        {groupedCats.map((g) => (
+          <div key={g.id} className="cat-group">
+            <div className="cat-group-head">
+              <span className="cat-group-icon">{g.icon}</span>
+              <span className="cat-group-name">{g.name}</span>
             </div>
-          ))}
-          {ungroupedCats.length > 0 && (
             <div className="cat-grid">
-              {ungroupedCats.map((c) => (
+              {g.cats.map((c) => (
                 <button
                   key={c.id}
                   type="button"
@@ -294,9 +222,29 @@ export default function RecordForm({
                 </button>
               ))}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        ))}
+        {ungroupedCats.length > 0 && (
+          <div className="cat-grid">
+            {ungroupedCats.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                className={categoryId === c.id ? 'cat-chip active' : 'cat-chip'}
+                style={
+                  categoryId === c.id
+                    ? { borderColor: c.color, background: `${c.color}22` }
+                    : undefined
+                }
+                onClick={() => setCategoryId(c.id)}
+              >
+                <span className="cat-icon">{c.icon}</span>
+                <span className="cat-name">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
       {cats.length === 0 && <p className="form-tip">该类型下暂无分类，可在「设置」中添加</p>}
 
       <div className="form-label">账户</div>

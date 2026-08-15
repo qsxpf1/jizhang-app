@@ -23,18 +23,12 @@ export default function Budget() {
   const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
   const spent = useMemo(() => categoryTotals(txs, ym, 'expense'), [txs, ym]);
 
-  const totalBudget = budgets.find((b) => b.categoryId === null && b.month === ym);
+  /** 由各分类预算合计得出总预算（不再允许独立设置） */
+  const calculatedTotal = useMemo(
+    () => budgets.filter((b) => b.categoryId !== null && b.month === ym).reduce((s, b) => s + b.amount, 0),
+    [budgets, ym],
+  );
   const catBudgetOf = (catId: string) => budgets.find((b) => b.categoryId === catId && b.month === ym);
-
-  const setTotalBudget = (v: string) => {
-    const existing = totalBudget;
-    const n = parseFloat(v);
-    if (Number.isNaN(n) || n <= 0) {
-      if (existing) deleteBudget(existing.id);
-      return;
-    }
-    setBudget({ categoryId: null, month: ym, amount: round2(n) });
-  };
 
   const setCatBudget = (catId: string, v: string) => {
     const existing = catBudgetOf(catId);
@@ -65,45 +59,40 @@ export default function Budget() {
         <div className="budget-head">
           <div className="budget-total-wrap">
             <div className="budget-name">本月总预算</div>
-            <Input
-              type="number"
-              min={0}
-              className="budget-input"
-              placeholder="设置总额（留空清除）"
-              value={totalBudget ? String(totalBudget.amount) : ''}
-              onChange={(e) => setTotalBudget(e.target.value)}
-            />
+            <div className="budget-input" style={{ fontSize: 24, fontWeight: 900, color: 'var(--ac-title)' }}>
+              {calculatedTotal > 0 ? formatMoneyPlain(calculatedTotal, settings) : '未设置分类预算'}
+            </div>
           </div>
           <div className="budget-nums">
             <div>
               已用{' '}
               <strong
-                className={totalBudget && over(totalBudget.amount, sum.expense) ? 'danger-text' : ''}
+                className={calculatedTotal > 0 && over(calculatedTotal, sum.expense) ? 'danger-text' : ''}
               >
                 {formatMoney(sum.expense, settings)}
               </strong>
             </div>
             <div>
               预算{' '}
-              {totalBudget ? formatMoneyPlain(totalBudget.amount, settings) : '未设置'}
+              {calculatedTotal > 0 ? formatMoneyPlain(calculatedTotal, settings) : '—'}
             </div>
-            {totalBudget && (
-              <div className={over(totalBudget.amount, sum.expense) ? 'danger-text' : 'budget-left'}>
-                剩余 {formatMoney(totalBudget.amount - sum.expense, settings)}
+            {calculatedTotal > 0 && (
+              <div className={over(calculatedTotal, sum.expense) ? 'danger-text' : 'budget-left'}>
+                剩余 {formatMoney(calculatedTotal - sum.expense, settings)}
               </div>
             )}
           </div>
         </div>
-        {totalBudget && totalBudget.amount > 0 && (
+        {calculatedTotal > 0 && (
           <div className="mt16">
             <ProgressBar
-              percent={budgetBar(totalBudget.amount, sum.expense)}
-              danger={over(totalBudget.amount, sum.expense)}
+              percent={budgetBar(calculatedTotal, sum.expense)}
+              danger={over(calculatedTotal, sum.expense)}
               height={16}
             />
-            {over(totalBudget.amount, sum.expense) && (
+            {over(calculatedTotal, sum.expense) && (
               <p className="over-budget">
-                ⚠️ 已超支 {formatMoney(sum.expense - totalBudget.amount, settings)}
+                ⚠️ 已超支 {formatMoney(sum.expense - calculatedTotal, settings)}
               </p>
             )}
           </div>

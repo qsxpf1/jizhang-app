@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Button, Card, Input, Modal, Select } from 'animal-island-ui';
+import { useEffect, useMemo, useState } from 'react';
+import { Button, Card, Input, Modal } from 'animal-island-ui';
 import type { Tx, TxType } from '../types';
 import { useBookStore } from '../store/useBookStore';
 import { useUiStore } from '../store/useUiStore';
@@ -7,7 +7,9 @@ import { groupByDate, sortTx } from '../utils/calc';
 import { formatMoney } from '../utils/money';
 import { payMethodLabel } from '../data/payMethods';
 import TxGrouped from '../components/TxGrouped';
+import MultiSelect from '../components/MultiSelect';
 
+const PAGE_SIZE = 20;
 type TypeFilter = 'all' | TxType;
 
 export default function List() {
@@ -19,9 +21,12 @@ export default function List() {
   const openRecord = useUiStore((s) => s.openRecord);
 
   const [type, setType] = useState<TypeFilter>('all');
-  const [catId, setCatId] = useState('all');
-  const [accId, setAccId] = useState('all');
+  const [catIds, setCatIds] = useState<string[]>([]);
+  const [accIds, setAccIds] = useState<string[]>([]);
   const [q, setQ] = useState('');
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+  const [page, setPage] = useState(1);
   const [delTarget, setDelTarget] = useState<Tx | null>(null);
 
   const filtered = useMemo(
@@ -29,8 +34,10 @@ export default function List() {
       txs
         .filter((t) => {
           if (type !== 'all' && t.type !== type) return false;
-          if (catId !== 'all' && t.categoryId !== catId) return false;
-          if (accId !== 'all' && t.accountId !== accId) return false;
+          if (catIds.length > 0 && !catIds.includes(t.categoryId)) return false;
+          if (accIds.length > 0 && !accIds.includes(t.accountId)) return false;
+          if (dateStart && t.date < dateStart) return false;
+          if (dateEnd && t.date > dateEnd) return false;
           if (q) {
             const meta = `${t.note ?? ''} ${t.location ?? ''} ${payMethodLabel(t.payMethod)}`;
             if (!meta.includes(q)) return false;
@@ -38,28 +45,32 @@ export default function List() {
           return true;
         })
         .sort(sortTx),
-    [txs, type, catId, accId, q],
+    [txs, type, catIds, accIds, q, dateStart, dateEnd],
   );
+
+  // 筛选条件变化时回到第一页
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, catIds, accIds, q, dateStart, dateEnd]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paged = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const groups = useMemo(() => groupByDate(paged), [paged]);
 
   const income = filtered.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const expense = filtered.filter((t) => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
-  const groups = useMemo(() => groupByDate(filtered), [filtered]);
 
   const categoryOptions = useMemo(
-    () => [
-      { key: 'all', label: '全部分类' },
-      ...categories
+    () =>
+      categories
         .filter((c) => type === 'all' || c.type === type)
         .map((c) => ({ key: c.id, label: `${c.icon} ${c.name}` })),
-    ],
     [categories, type],
   );
 
   const accountOptions = useMemo(
-    () => [
-      { key: 'all', label: '全部账户' },
-      ...accounts.map((a) => ({ key: a.id, label: `${a.icon} ${a.name}` })),
-    ],
+    () => accounts.map((a) => ({ key: a.id, label: `${a.icon} ${a.name}` })),
     [accounts],
   );
 
@@ -96,7 +107,7 @@ export default function List() {
                 }`}
                 onClick={() => {
                   setType(t);
-                  setCatId('all');
+                  setCatIds([]);
                 }}
               >
                 {t === 'all' ? '全部' : t === 'expense' ? '支出' : '收入'}
@@ -104,8 +115,8 @@ export default function List() {
             ))}
           </div>
           <div className="filter-selects">
-            <Select value={catId} onChange={setCatId} options={categoryOptions} />
-            <Select value={accId} onChange={setAccId} options={accountOptions} />
+            <MultiSelect values={catIds} onChange={setCatIds} options={categoryOptions} allLabel="全部分类" />
+            <MultiSelect values={accIds} onChange={setAccIds} options={accountOptions} allLabel="全部账户" />
             <div className="search-box">
               <Input
                 placeholder="搜索说明/地点"
@@ -114,6 +125,38 @@ export default function List() {
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
+          </div>
+        </div>
+        {/* 日期区间筛选 */}
+        <div className="filter-row" style={{ marginTop: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              className="date-native"
+              type="date"
+              value={dateStart}
+              onChange={(e) => setDateStart(e.target.value)}
+              style={{ fontSize: 13, padding: '5px 10px', minWidth: 130 }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--ac-sub)' }}>~</span>
+            <input
+              className="date-native"
+              type="date"
+              value={dateEnd}
+              onChange={(e) => setDateEnd(e.target.value)}
+              style={{ fontSize: 13, padding: '5px 10px', minWidth: 130 }}
+            />
+            {(dateStart || dateEnd) && (
+              <Button
+                size="small"
+                type="dashed"
+                onClick={() => {
+                  setDateStart('');
+                  setDateEnd('');
+                }}
+              >
+                清除
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -127,6 +170,31 @@ export default function List() {
         onDelete={setDelTarget}
         emptyText="没有符合条件的账目"
       />
+
+      {/* 分页 */}
+      {totalPages > 1 && (
+        <div
+          className="pagination"
+        >
+          <Button
+            size="small"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            ← 上一页
+          </Button>
+          <span className="pagination-info">
+            第 {page} / {totalPages} 页（共 {filtered.length} 笔）
+          </span>
+          <Button
+            size="small"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            下一页 →
+          </Button>
+        </div>
+      )}
 
       <Modal
         open={delTarget !== null}

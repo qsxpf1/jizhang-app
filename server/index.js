@@ -163,7 +163,7 @@ const DATA_TABLES = [
   'goals',
   'settings',
 ];
-const DEFAULT_SETTINGS = { bellMode: false, bellRate: 10, firstName: '岛主' };
+const DEFAULT_SETTINGS = { firstName: '岛主' };
 
 // ============================================================
 // 密码哈希 / 会话

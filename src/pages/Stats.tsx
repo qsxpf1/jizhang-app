@@ -17,21 +17,30 @@ import {
 } from 'recharts';
 import { useBookStore } from '../store/useBookStore';
 import {
-  categoryTotals,
   currentMonth,
-  dailyTotals,
-  groupTotals,
-  monthSummary,
+  dateStr,
   monthlyTotals,
+  monthRange,
+  rangeCategoryTotals,
+  rangeDailyTotals,
+  rangeGroupTotals,
+  rangeSummary,
 } from '../utils/calc';
 import { formatMoney, formatMoneyPlain } from '../utils/money';
 import { downloadJSON } from '../utils/storage';
-import MonthNav from '../components/MonthNav';
 
 interface PieDatum {
   name: string;
   value: number;
   color: string;
+}
+
+/** YYYY-MM-DD */
+function firstDayOfMonth(ym: string): string {
+  return `${ym}-01`;
+}
+function lastDayOfMonth(ym: string): string {
+  return monthRange(ym).end;
 }
 
 export default function Stats() {
@@ -40,14 +49,13 @@ export default function Stats() {
   const categoryGroups = useBookStore((s) => s.categoryGroups);
   const settings = useBookStore((s) => s.settings);
 
-  const [ym, setYm] = useState(currentMonth());
+  const [dateStart, setDateStart] = useState(() => firstDayOfMonth(currentMonth()));
+  const [dateEnd, setDateEnd] = useState(() => lastDayOfMonth(currentMonth()));
   const [groupView, setGroupView] = useState(false);
-  const year = Number(ym.slice(0, 4));
 
   const catOf = (id: string) => categories.find((c) => c.id === id);
   const groupOf = (id: string) => categoryGroups.find((g) => g.id === id);
 
-  // 大类视图下用 resolveKey 解析 key（可能是大类 id 或分类 id）
   const resolveKey = (key: string) => {
     const g = groupOf(key);
     if (g) return { name: g.name, icon: g.icon, color: g.color };
@@ -56,12 +64,12 @@ export default function Stats() {
     return { name: '未知', icon: '❓', color: '#9a835a' };
   };
 
-  const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
-  const expCat = useMemo(() => categoryTotals(txs, ym, 'expense'), [txs, ym]);
-  const incCat = useMemo(() => categoryTotals(txs, ym, 'income'), [txs, ym]);
+  const sum = useMemo(() => rangeSummary(txs, dateStart, dateEnd), [txs, dateStart, dateEnd]);
+  const expCat = useMemo(() => rangeCategoryTotals(txs, dateStart, dateEnd, 'expense'), [txs, dateStart, dateEnd]);
+  const incCat = useMemo(() => rangeCategoryTotals(txs, dateStart, dateEnd, 'income'), [txs, dateStart, dateEnd]);
   const expGroup = useMemo(
-    () => groupTotals(txs, ym, 'expense', categories, categoryGroups),
-    [txs, ym, categories, categoryGroups],
+    () => rangeGroupTotals(txs, dateStart, dateEnd, 'expense', categories, categoryGroups),
+    [txs, dateStart, dateEnd, categories, categoryGroups],
   );
   const hasExpGroups = categoryGroups.some((g) => g.type === 'expense');
 
@@ -69,7 +77,7 @@ export default function Stats() {
   const groupSubs = useMemo(() => {
     const m = new Map<string, { id: string; name: string; icon: string; value: number; color: string }[]>();
     for (const t of txs) {
-      if (t.type !== 'expense' || !t.date.startsWith(ym)) continue;
+      if (t.type !== 'expense' || t.date < dateStart || t.date > dateEnd) continue;
       const cat = catOf(t.categoryId);
       const gid = cat?.groupId && groupOf(cat.groupId) ? cat.groupId : undefined;
       if (!gid) continue;
@@ -88,9 +96,13 @@ export default function Stats() {
     }
     return m;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [txs, ym, categories, categoryGroups]);
-  const dailyExp = useMemo(() => dailyTotals(txs, ym, 'expense'), [txs, ym]);
-  const dailyInc = useMemo(() => dailyTotals(txs, ym, 'income'), [txs, ym]);
+  }, [txs, dateStart, dateEnd, categories, categoryGroups]);
+
+  const dailyExp = useMemo(() => rangeDailyTotals(txs, dateStart, dateEnd, 'expense'), [txs, dateStart, dateEnd]);
+  const dailyInc = useMemo(() => rangeDailyTotals(txs, dateStart, dateEnd, 'income'), [txs, dateStart, dateEnd]);
+
+  const ym = currentMonth(); // 仅用于年度柱状图
+  const year = Number(ym.slice(0, 4));
   const monthly = useMemo(() => {
     const exp = monthlyTotals(txs, year, 'expense');
     const inc = monthlyTotals(txs, year, 'income');
@@ -155,8 +167,8 @@ export default function Stats() {
   const money = (v: number) => formatMoneyPlain(v, settings);
 
   const exportReport = () => {
-    downloadJSON(`记账报表-${ym}.json`, {
-      month: ym,
+    downloadJSON(`记账报表-${dateStart}-${dateEnd}.json`, {
+      period: { start: dateStart, end: dateEnd },
       summary: sum,
       expenses: expRows.map((r) => ({ category: r.name, amount: r.value })),
       incomes: incRows.map((r) => ({ category: r.name, amount: r.value })),
@@ -165,7 +177,7 @@ export default function Stats() {
 
   const copyReport = async () => {
     const lines = [
-      `【${ym} 记账报表】`,
+      `【记账报表 ${dateStart} ~ ${dateEnd}】`,
       `收入 ${money(sum.income)} / 支出 ${money(sum.expense)} / 结余 ${money(sum.balance)}`,
       '--- 支出 ---',
       ...expRows.map((r) => `${r.name}：${money(r.value)}`),
@@ -181,6 +193,12 @@ export default function Stats() {
     }
   };
 
+  /** 设置为当月第一天至最后一天 */
+  const setToCurrentMonth = () => {
+    setDateStart(firstDayOfMonth(currentMonth()));
+    setDateEnd(lastDayOfMonth(currentMonth()));
+  };
+
   return (
     <div className="page">
       <div className="page-head">
@@ -191,8 +209,32 @@ export default function Stats() {
             {formatMoney(sum.balance, settings)}
           </p>
         </div>
-        <MonthNav value={ym} onChange={setYm} />
       </div>
+
+      {/* 日期区间选择 */}
+      <Card className="mt8">
+        <div className="settings-row" style={{ gap: 12, flexWrap: 'wrap' }}>
+          <div className="date-range-picker" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>起始</span>
+            <input
+              className="date-native"
+              type="date"
+              value={dateStart}
+              onChange={(e) => { if (e.target.value <= dateEnd) setDateStart(e.target.value); }}
+            />
+            <span style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>终止</span>
+            <input
+              className="date-native"
+              type="date"
+              value={dateEnd}
+              onChange={(e) => { if (e.target.value >= dateStart) setDateEnd(e.target.value); }}
+            />
+          </div>
+          <Button size="small" type="dashed" onClick={setToCurrentMonth}>
+            本月
+          </Button>
+        </div>
+      </Card>
 
       <Divider type="wave-yellow" />
 
@@ -220,7 +262,7 @@ export default function Stats() {
             )}
           </div>
           {pieData.length === 0 ? (
-            <p className="empty">本月暂无支出</p>
+            <p className="empty">期间暂无支出</p>
           ) : (
             <>
               <div className="chart-wrap">
@@ -262,7 +304,7 @@ export default function Stats() {
         </Card>
 
         <Card className="mt16">
-          <h3 className="chart-title">本月收支趋势</h3>
+          <h3 className="chart-title">期间收支趋势</h3>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={lineData}>
@@ -271,7 +313,6 @@ export default function Stats() {
                 <YAxis tick={{ fontSize: 11, fill: '#8a7b66' }} width={72} tickFormatter={(v) => money(Number(v))} />
                 <Tooltip
                   formatter={(value) => money(Number(value))}
-                  labelFormatter={(label) => `${Number(ym.slice(0, 4))} 年 ${Number(ym.slice(5))} 月 ${label} 日`}
                 />
                 <Legend wrapperStyle={{ fontSize: 13 }} />
                 <Line type="monotone" dataKey="支出" stroke="#e05a5a" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
@@ -300,7 +341,7 @@ export default function Stats() {
 
         <Card className="mt16">
           <div className="card-head">
-            <h3 className="chart-title">{ym} 分类报表</h3>
+            <h3 className="chart-title">{dateStart} ~ {dateEnd} 分类报表</h3>
             <div className="row">
               <Button size="small" onClick={copyReport}>
                 {copied ? '✓ 已复制' : '复制'}
@@ -313,7 +354,7 @@ export default function Stats() {
 
           <div className="section-label">支出</div>
           {expRows.length === 0 ? (
-            <p className="empty">本月暂无支出</p>
+            <p className="empty">期间暂无支出</p>
           ) : (
             <div className="report-list">
               {expRows.map((r) => {
@@ -356,7 +397,7 @@ export default function Stats() {
 
           <div className="section-label">收入</div>
           {incRows.length === 0 ? (
-            <p className="empty">本月暂无收入</p>
+            <p className="empty">期间暂无收入</p>
           ) : (
             <div className="report-list">
               {incRows.map((r) => (

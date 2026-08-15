@@ -125,10 +125,6 @@ export interface Goal {
 
 /** 全局设置 */
 export interface Settings {
-  /** 铃钱模式 */
-  bellMode: boolean;
-  /** 1 元 = N 铃 */
-  bellRate: number;
   /** 岛主名字 */
   firstName: string;
   /** 最近一次数据导入时间 */
