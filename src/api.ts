@@ -162,7 +162,7 @@ export async function batchOps(ops: BatchOp[]): Promise<{ ok: boolean; version: 
 // ---- 增量 CRUD 请求（带版本号） ---- //
 
 /** 带版本号的写请求，409 时抛 ConflictError */
-async function requestWrite<T>(path: string, method: string, body: unknown): Promise<T & { version: number }> {
+async function requestWrite<T>(path: string, method: string, body?: unknown): Promise<T & { version: number }> {
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -171,7 +171,7 @@ async function requestWrite<T>(path: string, method: string, body: unknown): Pro
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       'X-Version': String(currentVersion),
     },
-    body: JSON.stringify(body),
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   });
   if (res.status === 409) {
     let data: Snapshot = {} as Snapshot;
