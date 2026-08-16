@@ -32,6 +32,7 @@ export function setToken(token: string | null): void {
   }
 }
 
+// ---- 通用请求 ---- //
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
@@ -55,10 +56,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// 写请求串行化：后发的排在前一个完成之后，避免快速连续操作竞态
-let writeChain: Promise<unknown> = Promise.resolve();
+/** 当前账号在服务器端的数据版本（乐观并发控制） */
+let currentVersion = 0;
 
-/** GET /api/state 的结果：数据快照 + 该账号数据版本（乐观并发用） */
+export function getCurrentVersion(): number {
+  return currentVersion;
+}
+
+export function setCurrentVersion(v: number): void {
+  currentVersion = v;
+}
+
+// ---- 全量读写（初始化 + 批量操作用） ---- //
+
+/** GET /api/state 的结果：数据快照 + 该账号数据版本 */
 export interface StateResult {
   data: Snapshot;
   version: number;
@@ -94,51 +105,149 @@ export class ConflictError extends Error {
   }
 }
 
-export function putState(state: Snapshot, version: number): Promise<{ ok: boolean; version: number }> {
-  const task = writeChain.then(async () => {
-    const token = getToken();
-    const res = await fetch(`${BASE}/state`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        'X-Version': String(version),
-      },
-      body: JSON.stringify(state),
-    });
-    if (res.status === 409) {
-      // 另一台设备改过数据：服务器拒绝并附带最新快照，抛出后由 store 刷新
-      let data: Snapshot = {} as Snapshot;
-      let serverVersion = version;
-      let msg = '数据已过期，已为你刷新';
-      try {
-        const body = await res.json();
-        if (body && typeof body.data === 'object' && body.data) data = body.data as Snapshot;
-        serverVersion = Number(body?.version ?? version);
-        if (body && typeof body.error === 'string') msg = body.error;
-      } catch {
-        /* 忽略解析错误 */
-      }
-      throw new ConflictError(msg, data, serverVersion);
-    }
-    if (!res.ok) {
-      let msg = `HTTP ${res.status}`;
-      try {
-        const data = await res.json();
-        if (data && typeof data.error === 'string') msg = data.error;
-      } catch {
-        /* 忽略解析错误 */
-      }
-      throw new Error(msg);
-    }
-    const newVersion = Number(res.headers.get('X-Version') ?? version);
-    return { ok: true, version: newVersion };
+// ---- 批量操作（导入/清空/初始化等场景） ---- //
+
+/** 批量操作类型 */
+export type BatchOp =
+  | { action: 'clear' }
+  | { action: 'add_account'; data: Account }
+  | { action: 'add_category'; data: Category }
+  | { action: 'add_category_group'; data: CategoryGroup }
+  | { action: 'add_tx'; data: Tx }
+  | { action: 'add_transfer'; data: Transfer }
+  | { action: 'add_budget'; data: Budget }
+  | { action: 'add_goal'; data: Goal }
+  | { action: 'update_settings'; data: Partial<Settings> };
+
+/** POST /api/batch 批量操作（单事务，带版本校验），409 时抛 ConflictError */
+export async function batchOps(ops: BatchOp[]): Promise<{ ok: boolean; version: number }> {
+  const token = getToken();
+  const res = await fetch(`${BASE}/batch`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      'X-Version': String(currentVersion),
+    },
+    body: JSON.stringify({ ops }),
   });
-  writeChain = task.catch(() => undefined);
-  return task;
+  if (res.status === 409) {
+    let data: Snapshot = {} as Snapshot;
+    let serverVersion = currentVersion;
+    let msg = '数据已过期，已为你刷新';
+    try {
+      const json = await res.json();
+      if (json && typeof json.data === 'object' && json.data) data = json.data as Snapshot;
+      serverVersion = Number(json?.version ?? currentVersion);
+      if (json && typeof json.error === 'string') msg = json.error;
+    } catch {
+      /* 忽略解析错误 */
+    }
+    throw new ConflictError(msg, data, serverVersion);
+  }
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const json = await res.json();
+      if (json && typeof json.error === 'string') msg = json.error;
+    } catch {
+      /* 忽略解析错误 */
+    }
+    throw new Error(msg);
+  }
+  const newVersion = Number(res.headers.get('X-Version') ?? currentVersion);
+  return { ok: true, version: newVersion };
 }
 
-// ---- 认证 ----
+// ---- 增量 CRUD 请求（带版本号） ---- //
+
+/** 带版本号的写请求，409 时抛 ConflictError */
+async function requestWrite<T>(path: string, method: string, body: unknown): Promise<T & { version: number }> {
+  const token = getToken();
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      'X-Version': String(currentVersion),
+    },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 409) {
+    let data: Snapshot = {} as Snapshot;
+    let serverVersion = currentVersion;
+    let msg = '数据已过期，已为你刷新';
+    try {
+      const json = await res.json();
+      if (json && typeof json.data === 'object' && json.data) data = json.data as Snapshot;
+      serverVersion = Number(json?.version ?? currentVersion);
+      if (json && typeof json.error === 'string') msg = json.error;
+    } catch {
+      /* 忽略解析错误 */
+    }
+    throw new ConflictError(msg, data, serverVersion);
+  }
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`;
+    try {
+      const json = await res.json();
+      if (json && typeof json.error === 'string') msg = json.error;
+    } catch {
+      /* 忽略解析错误 */
+    }
+    throw new Error(msg);
+  }
+  const newVersion = Number(res.headers.get('X-Version') ?? currentVersion);
+  const json = await res.json();
+  return { ...json, version: newVersion } as T & { version: number };
+}
+
+/** 增量 CRUD API */
+export const entitiesApi = {
+  txs: {
+    add: (data: Tx) => requestWrite<{ ok: boolean }>('/entities/txs', 'POST', data),
+    update: (id: string, patch: Partial<Omit<Tx, 'id'>>) =>
+      requestWrite<{ ok: boolean }>(`/entities/txs/${id}`, 'PUT', patch),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/txs/${id}`, 'DELETE'),
+  },
+  accounts: {
+    add: (data: Account) => requestWrite<{ ok: boolean }>('/entities/accounts', 'POST', data),
+    update: (id: string, patch: Partial<Omit<Account, 'id'>>) =>
+      requestWrite<{ ok: boolean }>(`/entities/accounts/${id}`, 'PUT', patch),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/accounts/${id}`, 'DELETE'),
+  },
+  categories: {
+    add: (data: Category) => requestWrite<{ ok: boolean }>('/entities/categories', 'POST', data),
+    update: (id: string, patch: Partial<Omit<Category, 'id'>>) =>
+      requestWrite<{ ok: boolean }>(`/entities/categories/${id}`, 'PUT', patch),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/categories/${id}`, 'DELETE'),
+  },
+  categoryGroups: {
+    add: (data: CategoryGroup) => requestWrite<{ ok: boolean }>('/entities/category-groups', 'POST', data),
+    update: (id: string, patch: Partial<Omit<CategoryGroup, 'id'>>) =>
+      requestWrite<{ ok: boolean }>(`/entities/category-groups/${id}`, 'PUT', patch),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/category-groups/${id}`, 'DELETE'),
+  },
+  transfers: {
+    add: (data: Transfer) => requestWrite<{ ok: boolean }>('/entities/transfers', 'POST', data),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/transfers/${id}`, 'DELETE'),
+  },
+  budgets: {
+    add: (data: Budget) => requestWrite<{ ok: boolean }>('/entities/budgets', 'POST', data),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/budgets/${id}`, 'DELETE'),
+  },
+  goals: {
+    add: (data: Goal) => requestWrite<{ ok: boolean }>('/entities/goals', 'POST', data),
+    update: (id: string, patch: Partial<Omit<Goal, 'id'>>) =>
+      requestWrite<{ ok: boolean }>(`/entities/goals/${id}`, 'PUT', patch),
+    delete: (id: string) => requestWrite<{ ok: boolean }>(`/entities/goals/${id}`, 'DELETE'),
+  },
+  settings: {
+    update: (data: Partial<Settings>) => requestWrite<{ ok: boolean }>('/entities/settings', 'PUT', { ...data }),
+  },
+} as const;
+
+// ---- 认证 ---- //
 export interface AuthResult {
   token: string;
   username: string;

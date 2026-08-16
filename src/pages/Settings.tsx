@@ -52,13 +52,13 @@ export default function Settings() {
 
   const onImportFile = (file: File) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(String(reader.result));
         if (!Array.isArray(data.txs) || !Array.isArray(data.categories)) {
           throw new Error('bad format');
         }
-        useBookStore.getState().importData({
+        await useBookStore.getState().importData({
           accounts: data.accounts,
           categories: data.categories,
           categoryGroups: data.categoryGroups,
@@ -70,7 +70,7 @@ export default function Settings() {
         });
         setImportMsg('✓ 导入成功');
       } catch {
-        setImportMsg('✗ 文件格式不正确');
+        setImportMsg('⚠️ 保存失败');
       }
       window.setTimeout(() => setImportMsg(''), 3000);
     };
@@ -302,8 +302,8 @@ export default function Settings() {
             <Button
               type="primary"
               danger
-              onClick={() => {
-                useBookStore.getState().resetAll();
+              onClick={async () => {
+                await useBookStore.getState().resetAll();
                 setResetOpen(false);
               }}
             >
@@ -327,8 +327,8 @@ export default function Settings() {
             </Button>
             <Button
               type="primary"
-              onClick={() => {
-                useBookStore.getState().seedDemo();
+              onClick={async () => {
+                await useBookStore.getState().seedDemo();
                 setSeedOpen(false);
               }}
             >

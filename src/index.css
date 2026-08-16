@@ -293,6 +293,33 @@ h4 {
   margin-bottom: 20px;
 }
 
+/* ---------- 首页统计选项卡（本月/历史） ---------- */
+.stat-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.stat-tabs button {
+  border: 2.5px solid var(--ac-input-border);
+  background: transparent;
+  border-radius: 50px;
+  padding: 8px 28px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ac-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.stat-tabs button:hover {
+  color: var(--ac-text);
+}
+.stat-tabs button.active {
+  background: var(--ac-primary);
+  color: #fff;
+  border-color: var(--ac-primary);
+  box-shadow: 0 3px 0 0 var(--ac-primary-active);
+}
+
 .stat-row {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

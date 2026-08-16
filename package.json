@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "动物森友会风格的在线记账网站（纯前端本地存储）",
+  "description": "动物森友会风格的在线记账网站（Vite + React + Express + MySQL）",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

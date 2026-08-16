@@ -153,6 +153,7 @@ const TABLES = [
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 ];
 
+/** 参与迁移和全量写入的表（不含 settings，其主键特殊） */
 const DATA_TABLES = [
   'accounts',
   'categories',
@@ -385,102 +386,69 @@ async function getVersion(userId) {
   return rows[0]?.version ?? 0;
 }
 
-/**
- * 全量写入（乐观并发控制）：expectedVersion 与当前版本一致才执行「先删后插」；
- * 不一致说明有另一台设备改过数据，返回 { conflict } 由上层回 409，让前端刷新，
- * 避免旧设备的旧快照覆盖新设备刚写入的数据。
- */
-async function writeAll(body, userId, expectedVersion) {
-  const a = Array.isArray(body?.accounts) ? body.accounts : [];
-  const c = Array.isArray(body?.categories) ? body.categories : [];
-  const cg = Array.isArray(body?.categoryGroups) ? body.categoryGroups : [];
-  const t = Array.isArray(body?.txs) ? body.txs : [];
-  const tr = Array.isArray(body?.transfers) ? body.transfers : [];
-  const b = Array.isArray(body?.budgets) ? body.budgets : [];
-  const g = Array.isArray(body?.goals) ? body.goals : [];
-  const s = { ...DEFAULT_SETTINGS, ...(body?.settings || {}) };
+/** 原子版本校验 + 递增（用 UPDATE 的原子性代替 SELECT ... FOR UPDATE 显式行锁） */
+async function checkVersion(conn, userId, expectedVersion) {
+  const [result] = await conn.query(
+    'UPDATE meta SET version = version + 1, updated_at = ? WHERE user_id = ? AND version = ?',
+    [Date.now(), userId, expectedVersion],
+  );
+  return result.affectedRows === 1;
+}
 
+/**
+ * 通用写操作路由包装器：
+ * 1. 取 X-Version 头 → 2. 开启事务 → 3. checkVersion 原子校验
+ * 4. 冲突 → ROLLBACK + 409 + 最新全量快照
+ * 5. 执行具体的 executeFn(conn, req) → 6. COMMIT + 响应头 + 日志
+ */
+async function handleWrite(req, res, executeFn, action) {
+  const t0 = Date.now();
+  const expectedVersion = Number(req.headers['x-version'] ?? 0);
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-
-    // 行锁 + 版本比对，保证「校验版本 → 删 → 插 → 递增版本」是原子操作
-    const [metaRows] = await conn.query(
-      'SELECT version FROM meta WHERE user_id = ? FOR UPDATE',
-      [userId],
-    );
-    const currentVersion = metaRows[0]?.version ?? 0;
-    if (currentVersion !== expectedVersion) {
+    const versionOk = await checkVersion(conn, req.userId, expectedVersion);
+    if (!versionOk) {
       await conn.rollback();
-      return { conflict: true, version: currentVersion };
+      const latest = await readAll(req.userId);
+      const currentVersion = await getVersion(req.userId);
+      await logOperation({
+        method: req.method, path: req.path, action: `${action}_conflict`,
+        status: 'conflict', latencyMs: Date.now() - t0,
+        userId: req.userId, username: req.username,
+        detail: `版本冲突：客户端=${expectedVersion}，当前=${currentVersion}`,
+      });
+      return res.status(409).json({
+        error: '另一台设备已修改数据，已为你刷新到最新版本',
+        version: currentVersion, data: latest,
+      });
     }
-
-    for (const table of DATA_TABLES) {
-      await conn.query(`DELETE FROM \`${table}\` WHERE user_id = ?`, [userId]);
-    }
-
-    for (const x of a) {
-      await conn.query(
-        'INSERT INTO accounts (user_id,id,name,type,icon,color,initial_balance,hidden,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.name, x.type, x.icon, x.color, x.initialBalance ?? 0, x.hidden ? 1 : 0, x.createdAt ?? Date.now()],
-      );
-    }
-    for (const x of c) {
-      await conn.query(
-        'INSERT INTO categories (user_id,id,name,type,icon,color,is_default,sort,group_id) VALUES (?,?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.name, x.type, x.icon, x.color, x.isDefault ? 1 : 0, x.sort ?? 0, x.groupId || null],
-      );
-    }
-    for (const x of cg) {
-      await conn.query(
-        'INSERT INTO category_groups (user_id,id,name,type,icon,color,sort,created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.name, x.type, x.icon, x.color, x.sort ?? 0, x.createdAt ?? Date.now()],
-      );
-    }
-    for (const x of t) {
-      await conn.query(
-        'INSERT INTO txs (user_id,id,type,amount,category_id,account_id,date,time,location,pay_method,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.type, x.amount, x.categoryId, x.accountId, x.date, x.time ?? null, x.location ?? '', x.payMethod ?? '', x.note ?? '', x.createdAt ?? Date.now(), x.updatedAt ?? null],
-      );
-    }
-    for (const x of tr) {
-      await conn.query(
-        'INSERT INTO transfers (user_id,id,from_account_id,to_account_id,amount,date,note,created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.fromAccountId, x.toAccountId, x.amount, x.date, x.note ?? '', x.createdAt ?? Date.now()],
-      );
-    }
-    for (const x of b) {
-      await conn.query(
-        'INSERT INTO budgets (user_id,id,category_id,month,amount) VALUES (?,?,?,?,?)',
-        [userId, x.id, x.categoryId, x.month, x.amount],
-      );
-    }
-    for (const x of g) {
-      await conn.query(
-        'INSERT INTO goals (user_id,id,name,target_amount,saved_amount,deadline,color,created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [userId, x.id, x.name, x.targetAmount, x.savedAmount ?? 0, x.deadline ?? null, x.color, x.createdAt ?? Date.now()],
-      );
-    }
-    await conn.query('INSERT INTO settings (user_id,k,v) VALUES (?,?,?)', [
-      userId,
-      'default',
-      JSON.stringify(s),
-    ]);
-
-    await conn.query(
-      'INSERT INTO meta (user_id, version, updated_at) VALUES (?,?,?) ON DUPLICATE KEY UPDATE version = VALUES(version), updated_at = VALUES(updated_at)',
-      [userId, currentVersion + 1, Date.now()],
-    );
-
+    await executeFn(conn, req);
     await conn.commit();
-    return { ok: true, version: currentVersion + 1 };
+    const newVersion = expectedVersion + 1;
+    res.set('X-Version', String(newVersion));
+    await logOperation({
+      method: req.method, path: req.path, action,
+      status: 'success', latencyMs: Date.now() - t0,
+      userId: req.userId, username: req.username,
+      detail: `version=${newVersion}`,
+    });
+    res.json({ ok: true, version: newVersion });
   } catch (e) {
-    await conn.rollback();
-    throw e;
+    await conn.rollback().catch(() => {});
+    await logOperation({
+      method: req.method, path: req.path, action,
+      status: 'error', latencyMs: Date.now() - t0,
+      userId: req.userId, username: req.username,
+      detail: e?.message || String(e),
+    });
+    res.status(500).json({ error: `${action}失败：${e.message || e}` });
   } finally {
     conn.release();
   }
 }
+
+// (writeAll 已移除，改用增量 CRUD + 批量接口)
 
 // ============================================================
 // 操作日志（每次数据库操作都落一条到 operation_logs + 控制台）
@@ -621,28 +589,317 @@ app.get('/api/state', authRequired, async (req, res) => {
   }
 });
 
-app.put('/api/state', authRequired, async (req, res) => {
-  const t0 = Date.now();
-  try {
-    const expectedVersion = Number(req.headers['x-version'] ?? 0);
-    const result = await writeAll(req.body, req.userId, expectedVersion);
-    if (result.conflict) {
-      // 本请求基于的版本已过期：拒绝写入，返回最新数据让前端刷新
-      const latest = await readAll(req.userId);
-      await logOperation({
-        method: 'PUT', path: '/api/state', action: 'save_state', status: 'conflict',
-        latencyMs: Date.now() - t0, userId: req.userId, username: req.username,
-        detail: `版本冲突：客户端=${expectedVersion}，当前=${result.version}`,
-      });
-      res.status(409).json({ error: '另一台设备已修改数据，已为你刷新到最新版本', version: result.version, data: latest });
-      return;
+// (PUT /api/state 已移除，改用增量 CRUD + POST /api/batch)
+
+// ---- 增量 CRUD 接口（各实体独立增删改，带版本校验）----
+
+// ── txs ──
+app.post('/api/entities/txs', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO txs (user_id,id,type,amount,category_id,account_id,date,time,location,pay_method,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.type, x.amount, x.categoryId, x.accountId, x.date, x.time ?? null, x.location ?? '', x.payMethod ?? '', x.note ?? '', x.createdAt ?? Date.now(), x.updatedAt ?? null],
+    );
+  }, 'add_tx');
+});
+
+app.put('/api/entities/txs/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const p = req.body;
+    const sets = [];
+    const vals = [];
+    const fields = {
+      type: p.type, amount: p.amount, category_id: p.categoryId,
+      account_id: p.accountId, date: p.date, time: p.time ?? null,
+      location: p.location ?? '', pay_method: p.payMethod ?? '',
+      note: p.note ?? '', updated_at: Date.now(),
+    };
+    for (const [col, val] of Object.entries(fields)) {
+      sets.push(`${col}=?`);
+      vals.push(val);
     }
-    res.set('X-Version', String(result.version));
-    await logOperation({ method: 'PUT', path: '/api/state', action: 'save_state', status: 'success', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: `version=${result.version}` });
-    res.json({ ok: true, version: result.version });
+    if (sets.length === 0) return;
+    vals.push(req.userId, req.params.id);
+    await conn.query(`UPDATE txs SET ${sets.join(',')} WHERE user_id=? AND id=?`, vals);
+  }, 'update_tx');
+});
+
+app.delete('/api/entities/txs/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM txs WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_tx');
+});
+
+// ── accounts ──
+app.post('/api/entities/accounts', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO accounts (user_id,id,name,type,icon,color,initial_balance,hidden,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.name, x.type, x.icon, x.color, x.initialBalance ?? 0, x.hidden ? 1 : 0, x.createdAt ?? Date.now()],
+    );
+  }, 'add_account');
+});
+
+app.put('/api/entities/accounts/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const p = req.body;
+    await conn.query(
+      'UPDATE accounts SET name=?,type=?,icon=?,color=?,initial_balance=?,hidden=? WHERE user_id=? AND id=?',
+      [p.name, p.type, p.icon, p.color, p.initialBalance ?? 0, p.hidden ? 1 : 0, req.userId, req.params.id],
+    );
+  }, 'update_account');
+});
+
+app.delete('/api/entities/accounts/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM accounts WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_account');
+});
+
+// ── categories ──
+app.post('/api/entities/categories', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO categories (user_id,id,name,type,icon,color,is_default,sort,group_id) VALUES (?,?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.name, x.type, x.icon, x.color, x.isDefault ? 1 : 0, x.sort ?? 0, x.groupId || null],
+    );
+  }, 'add_category');
+});
+
+app.put('/api/entities/categories/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const p = req.body;
+    await conn.query(
+      'UPDATE categories SET name=?,type=?,icon=?,color=?,is_default=?,sort=?,group_id=? WHERE user_id=? AND id=?',
+      [p.name, p.type, p.icon, p.color, p.isDefault ? 1 : 0, p.sort ?? 0, p.groupId || null, req.userId, req.params.id],
+    );
+  }, 'update_category');
+});
+
+app.delete('/api/entities/categories/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM categories WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+    await conn.query('DELETE FROM budgets WHERE user_id=? AND category_id=?', [req.userId, req.params.id]);
+  }, 'delete_category');
+});
+
+// ── category-groups ──
+app.post('/api/entities/category-groups', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO category_groups (user_id,id,name,type,icon,color,sort,created_at) VALUES (?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.name, x.type, x.icon, x.color, x.sort ?? 0, x.createdAt ?? Date.now()],
+    );
+  }, 'add_category_group');
+});
+
+app.put('/api/entities/category-groups/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const p = req.body;
+    await conn.query(
+      'UPDATE category_groups SET name=?,type=?,icon=?,color=?,sort=? WHERE user_id=? AND id=?',
+      [p.name, p.type, p.icon, p.color, p.sort ?? 0, req.userId, req.params.id],
+    );
+  }, 'update_category_group');
+});
+
+app.delete('/api/entities/category-groups/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM category_groups WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_category_group');
+});
+
+// ── transfers ──
+app.post('/api/entities/transfers', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO transfers (user_id,id,from_account_id,to_account_id,amount,date,note,created_at) VALUES (?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.fromAccountId, x.toAccountId, x.amount, x.date, x.note ?? '', x.createdAt ?? Date.now()],
+    );
+  }, 'add_transfer');
+});
+
+app.delete('/api/entities/transfers/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM transfers WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_transfer');
+});
+
+// ── budgets ──
+app.post('/api/entities/budgets', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    const [exist] = await conn.query(
+      'SELECT id FROM budgets WHERE user_id=? AND category_id=? AND month=?',
+      [req.userId, x.categoryId, x.month],
+    );
+    if (exist.length > 0) {
+      await conn.query('UPDATE budgets SET amount=? WHERE user_id=? AND id=?', [x.amount, req.userId, exist[0].id]);
+    } else {
+      await conn.query(
+        'INSERT INTO budgets (user_id,id,category_id,month,amount) VALUES (?,?,?,?,?)',
+        [req.userId, x.id, x.categoryId, x.month, x.amount],
+      );
+    }
+  }, 'add_budget');
+});
+
+app.delete('/api/entities/budgets/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM budgets WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_budget');
+});
+
+// ── goals ──
+app.post('/api/entities/goals', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const x = req.body;
+    await conn.query(
+      'INSERT INTO goals (user_id,id,name,target_amount,saved_amount,deadline,color,created_at) VALUES (?,?,?,?,?,?,?,?)',
+      [req.userId, x.id, x.name, x.targetAmount, x.savedAmount ?? 0, x.deadline ?? null, x.color, x.createdAt ?? Date.now()],
+    );
+  }, 'add_goal');
+});
+
+app.put('/api/entities/goals/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const p = req.body;
+    await conn.query(
+      'UPDATE goals SET name=?,target_amount=?,saved_amount=?,deadline=?,color=? WHERE user_id=? AND id=?',
+      [p.name, p.targetAmount, p.savedAmount ?? 0, p.deadline ?? null, p.color, req.userId, req.params.id],
+    );
+  }, 'update_goal');
+});
+
+app.delete('/api/entities/goals/:id', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    await conn.query('DELETE FROM goals WHERE user_id=? AND id=?', [req.userId, req.params.id]);
+  }, 'delete_goal');
+});
+
+// ── settings ──
+app.put('/api/entities/settings', authRequired, (req, res) => {
+  handleWrite(req, res, async (conn) => {
+    const v = { ...req.body };
+    await conn.query(
+      'REPLACE INTO settings (user_id,k,v) VALUES (?,?,?)',
+      [req.userId, 'default', JSON.stringify(v)],
+    );
+  }, 'update_settings');
+});
+
+// ---- 批量操作接口（导入/清空/初始化等场景，单事务内执行多个增删改）----
+app.post('/api/batch', authRequired, async (req, res) => {
+  const t0 = Date.now();
+  const expectedVersion = Number(req.headers['x-version'] ?? 0);
+  const ops = Array.isArray(req.body?.ops) ? req.body.ops : [];
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const versionOk = await checkVersion(conn, req.userId, expectedVersion);
+    if (!versionOk) {
+      await conn.rollback();
+      const latest = await readAll(req.userId);
+      const currentVersion = await getVersion(req.userId);
+      await logOperation({
+        method: 'POST', path: '/api/batch', action: 'batch_conflict',
+        status: 'conflict', latencyMs: Date.now() - t0,
+        userId: req.userId, username: req.username,
+        detail: `版本冲突：客户端=${expectedVersion}，当前=${currentVersion}`,
+      });
+      return res.status(409).json({
+        error: '另一台设备已修改数据，已为你刷新到最新版本',
+        version: currentVersion, data: latest,
+      });
+    }
+
+    for (const op of ops) {
+      const d = op.data || {};
+      switch (op.action) {
+        case 'clear':
+          for (const table of DATA_TABLES) {
+            await conn.query(`DELETE FROM \`${table}\` WHERE user_id = ?`, [req.userId]);
+          }
+          break;
+        case 'add_account':
+          await conn.query(
+            'INSERT INTO accounts (user_id,id,name,type,icon,color,initial_balance,hidden,created_at) VALUES (?,?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.name, d.type, d.icon, d.color, d.initialBalance ?? 0, d.hidden ? 1 : 0, d.createdAt ?? Date.now()],
+          );
+          break;
+        case 'add_category':
+          await conn.query(
+            'INSERT INTO categories (user_id,id,name,type,icon,color,is_default,sort,group_id) VALUES (?,?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.name, d.type, d.icon, d.color, d.isDefault ? 1 : 0, d.sort ?? 0, d.groupId || null],
+          );
+          break;
+        case 'add_category_group':
+          await conn.query(
+            'INSERT INTO category_groups (user_id,id,name,type,icon,color,sort,created_at) VALUES (?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.name, d.type, d.icon, d.color, d.sort ?? 0, d.createdAt ?? Date.now()],
+          );
+          break;
+        case 'add_tx':
+          await conn.query(
+            'INSERT INTO txs (user_id,id,type,amount,category_id,account_id,date,time,location,pay_method,note,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.type, d.amount, d.categoryId, d.accountId, d.date, d.time ?? null, d.location ?? '', d.payMethod ?? '', d.note ?? '', d.createdAt ?? Date.now(), d.updatedAt ?? null],
+          );
+          break;
+        case 'add_transfer':
+          await conn.query(
+            'INSERT INTO transfers (user_id,id,from_account_id,to_account_id,amount,date,note,created_at) VALUES (?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.fromAccountId, d.toAccountId, d.amount, d.date, d.note ?? '', d.createdAt ?? Date.now()],
+          );
+          break;
+        case 'add_budget':
+          await conn.query(
+            'INSERT INTO budgets (user_id,id,category_id,month,amount) VALUES (?,?,?,?,?)',
+            [req.userId, d.id, d.categoryId, d.month, d.amount],
+          );
+          break;
+        case 'add_goal':
+          await conn.query(
+            'INSERT INTO goals (user_id,id,name,target_amount,saved_amount,deadline,color,created_at) VALUES (?,?,?,?,?,?,?,?)',
+            [req.userId, d.id, d.name, d.targetAmount, d.savedAmount ?? 0, d.deadline ?? null, d.color, d.createdAt ?? Date.now()],
+          );
+          break;
+        case 'update_settings':
+          await conn.query(
+            'REPLACE INTO settings (user_id,k,v) VALUES (?,?,?)',
+            [req.userId, 'default', JSON.stringify(d)],
+          );
+          break;
+        default:
+          break;
+      }
+    }
+
+    await conn.commit();
+    const newVersion = expectedVersion + 1;
+    res.set('X-Version', String(newVersion));
+    await logOperation({
+      method: 'POST', path: '/api/batch', action: 'batch',
+      status: 'success', latencyMs: Date.now() - t0,
+      userId: req.userId, username: req.username,
+      detail: `ops=${ops.length}, version=${newVersion}`,
+    });
+    res.json({ ok: true, version: newVersion });
   } catch (e) {
-    await logOperation({ method: 'PUT', path: '/api/state', action: 'save_state', status: 'error', latencyMs: Date.now() - t0, userId: req.userId, username: req.username, detail: e?.message || String(e) });
-    res.status(500).json({ error: `保存数据失败：${e.message || e}` });
+    await conn.rollback().catch(() => {});
+    await logOperation({
+      method: 'POST', path: '/api/batch', action: 'batch',
+      status: 'error', latencyMs: Date.now() - t0,
+      userId: req.userId, username: req.username,
+      detail: e?.message || String(e),
+    });
+    res.status(500).json({ error: `批量操作失败：${e.message || e}` });
+  } finally {
+    conn.release();
   }
 });
 

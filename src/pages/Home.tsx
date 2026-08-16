@@ -4,10 +4,12 @@ import { Button, Card, Modal } from 'animal-island-ui';
 import type { Tx } from '../types';
 import { useBookStore } from '../store/useBookStore';
 import { useUiStore } from '../store/useUiStore';
-import { currentMonth, groupByDate, monthSummary, sortTx } from '../utils/calc';
+import { currentMonth, groupByDate, monthSummary, sortTx, rangeSummary } from '../utils/calc';
 import { formatMoney } from '../utils/money';
 import RecordForm from '../components/RecordForm';
 import TxGrouped from '../components/TxGrouped';
+
+type StatTab = 'thisMonth' | 'history';
 
 export default function Home() {
   const txs = useBookStore((s) => s.txs);
@@ -19,13 +21,42 @@ export default function Home() {
   const deleteTx = useBookStore((s) => s.deleteTx);
   const openRecord = useUiStore((s) => s.openRecord);
 
+  const [tab, setTab] = useState<StatTab>('thisMonth');
   const ym = currentMonth();
-  const sum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
+
+  // 本月统计
+  const monthSum = useMemo(() => monthSummary(txs, ym), [txs, ym]);
   const totalBudget = useMemo(
     () => budgets.filter((b) => b.categoryId !== null && b.month === ym).reduce((s, b) => s + b.amount, 0),
     [budgets, ym],
   );
-  const budgetRemaining = totalBudget - sum.expense;
+  const budgetRemaining = totalBudget - monthSum.expense;
+
+  // 全部历史统计
+  const allTimeSum = useMemo(() => {
+    if (txs.length === 0) return { income: 0, expense: 0, balance: 0 };
+    // 取最早和最晚日期做 range
+    let minDate = txs[0].date;
+    let maxDate = txs[0].date;
+    for (const t of txs) {
+      if (t.date < minDate) minDate = t.date;
+      if (t.date > maxDate) maxDate = t.date;
+    }
+    return rangeSummary(txs, minDate, maxDate);
+  }, [txs]);
+
+  // 全部历史预算总和（所有月份所有分类预算之和）
+  const totalBudgetAllTime = useMemo(
+    () => budgets.filter((b) => b.categoryId !== null).reduce((s, b) => s + b.amount, 0),
+    [budgets],
+  );
+  const budgetRemainAllTime = totalBudgetAllTime - allTimeSum.expense;
+
+  // 当前选项卡决定的统计值 + 预算信息
+  const activeSum = tab === 'thisMonth' ? monthSum : allTimeSum;
+  const activeTotalBudget = tab === 'thisMonth' ? totalBudget : totalBudgetAllTime;
+  const activeBudgetRemain = tab === 'thisMonth' ? budgetRemaining : budgetRemainAllTime;
+
   const monthTxs = useMemo(() => txs.filter((t) => t.date.startsWith(ym)).sort(sortTx), [txs, ym]);
 
   const [showAll, setShowAll] = useState(false);
@@ -56,29 +87,46 @@ export default function Home() {
         </p>
       </div>
 
+      <div className="stat-tabs">
+        <button
+          type="button"
+          className={tab === 'thisMonth' ? 'active' : ''}
+          onClick={() => setTab('thisMonth')}
+        >
+          本月
+        </button>
+        <button
+          type="button"
+          className={tab === 'history' ? 'active' : ''}
+          onClick={() => setTab('history')}
+        >
+          历史
+        </button>
+      </div>
+
       <div className="stat-row">
         <Card color="app-blue">
           <div className="stat-card">
-            <span>本月收入</span>
-            <strong>{formatMoney(sum.income, settings)}</strong>
+            <span>{tab === 'thisMonth' ? '本月收入' : '总收入'}</span>
+            <strong>{formatMoney(activeSum.income, settings)}</strong>
           </div>
         </Card>
         <Card color="app-orange">
           <div className="stat-card">
-            <span>本月支出</span>
-            <strong>{formatMoney(sum.expense, settings)}</strong>
+            <span>{tab === 'thisMonth' ? '本月支出' : '总支出'}</span>
+            <strong>{formatMoney(activeSum.expense, settings)}</strong>
           </div>
         </Card>
-        <Card color={sum.balance >= 0 ? 'app-green' : 'app-red'}>
+        <Card color={activeSum.balance >= 0 ? 'app-green' : 'app-red'}>
           <div className="stat-card">
-            <span>结余</span>
-            <strong>{formatMoney(sum.balance, settings)}</strong>
+            <span>{tab === 'thisMonth' ? '结余' : '净结余'}</span>
+            <strong>{formatMoney(activeSum.balance, settings)}</strong>
           </div>
         </Card>
-        <Card color={totalBudget > 0 ? (budgetRemaining >= 0 ? 'app-teal' : 'app-red') : 'default'}>
+        <Card color={activeTotalBudget > 0 ? (activeBudgetRemain >= 0 ? 'app-teal' : 'app-red') : 'default'}>
           <div className="stat-card">
-            <span>预算结余</span>
-            <strong>{totalBudget > 0 ? formatMoney(budgetRemaining, settings) : '未设置'}</strong>
+            <span>{tab === 'thisMonth' ? '预算结余' : '总预算结余'}</span>
+            <strong>{activeTotalBudget > 0 ? formatMoney(activeBudgetRemain, settings) : '未设置'}</strong>
           </div>
         </Card>
       </div>
